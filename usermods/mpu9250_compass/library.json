@@ -1,0 +1,5 @@
+{
+  "name": "mpu9250_compass",
+  "build": { "libArchive": false },
+  "dependencies": {}
+}
