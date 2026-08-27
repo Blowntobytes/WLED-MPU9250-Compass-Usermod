@@ -1,0 +1,13 @@
+# Keep the original task prompt out of this repository
+mpu9250_usermod_prompt.md
+
+# Local IDE / OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Build artifacts (should never appear in this repo)
+.pio/
+build_output/

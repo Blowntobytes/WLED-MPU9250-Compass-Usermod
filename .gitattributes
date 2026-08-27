@@ -1,0 +1,9 @@
+# Normalise line endings for text files
+* text=auto
+
+*.h   text eol=lf
+*.cpp text eol=lf
+*.json text eol=lf
+*.ini text eol=lf
+*.md  text eol=lf
+*.patch text eol=lf
