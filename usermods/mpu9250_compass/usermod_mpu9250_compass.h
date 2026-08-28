@@ -1,21 +1,25 @@
 #pragma once
 
 /*
- * WLED usermod: MPU-9250 compass LED display
+ * WLED usermod: MPU-9250 / GY-271 compass LED display
  *
- * Turns a NeoPixel strip/ring into a compass using an MPU-9250 9-axis
- * IMU (gyro + accel + magnetometer) on the I2C bus.
+ * Turns a NeoPixel strip/ring into a compass. Two sensor options:
+ *   - MPU-9250 9-axis IMU (gyro + accel + magnetometer) on the I2C bus.
+ *     Computes a tilt-compensated magnetic heading from the magnetometer
+ *     and accelerometer data.
+ *   - GY-271 magnetometer breakout (HMC5883L or QMC5883L). Simpler 2-axis
+ *     heading (module must be held level), no tilt compensation needed.
  *
- * A tilt-compensated magnetic heading is computed from the magnetometer
- * and accelerometer data. The LEDs that point towards magnetic North
- * render in a configurable color/effect, all remaining LEDs render in a
- * different configurable color/effect.
+ * The LEDs that point towards magnetic North render in a configurable
+ * color/effect, all remaining LEDs render in a different configurable
+ * color/effect.
  *
  * WLED version: 16.0.0
  *
  * Wiring (ESP32 defaults): VCC -> 3.3V, GND -> GND, SDA -> 21, SCL -> 22.
- * The sensor is detected at I2C address 0x68 (AD0=0) or 0x69 (AD0=1).
- * begin() fails gracefully: if the sensor is not found the usermod stays
+ * MPU-9250 is detected at I2C address 0x68 (AD0=0) or 0x69 (AD0=1).
+ * GY-271 is auto-detected: HMC5883L at 0x1E or QMC5883L at 0x0D.
+ * begin() fails gracefully: if no sensor is found the usermod stays
  * disabled and the strip behaves normally.
  *
  * Enable in your build by adding "mpu9250_compass" to the custom_usermods
@@ -48,6 +52,7 @@ class Mpu9250Compass : public Usermod {
     int      sdaPin          = MPU9250_DEFAULT_SDA;
     int      sclPin          = MPU9250_DEFAULT_SCL;
     uint8_t  i2cAddress      = 0x68;
+    uint8_t  sensorType      = 0;       // 0 = auto, 1 = MPU-9250, 2 = GY-271 (HMC5883L/QMC5883L)
     uint16_t totalLeds       = 60;      // size of the compass ring (LEDs)
     char     northColorStr[8] = "FF0000";  // RRGGBB
     char     otherColorStr[8] = "0022FF";  // RRGGBB
@@ -63,6 +68,7 @@ class Mpu9250Compass : public Usermod {
     // ---- runtime state ----
     bool     sensorAvailable = false;
     bool     initialized     = false;
+    uint8_t  _sensorKind     = 0;       // 0 = none, 1 = MPU-9250, 2 = GY-271
     uint8_t  _initAddr       = 0;
     int      _initSda        = -1;
     int      _initScl        = -1;
@@ -83,7 +89,17 @@ class Mpu9250Compass : public Usermod {
     int16_t  calMin[3] = {0, 0, 0};
     int16_t  calMax[3] = {0, 0, 0};
 
+    // ---- diagnostics ----
+    uint8_t  whoAmI    = 0;      // MPU-6500 WHO_AM_I value (0x71 genuine MPU-9250, 0x70/0x68 clones, 0 = no reply)
+    uint8_t  magWhoAmI = 0;      // AK8963 WIA value (0x48 genuine magnetometer, 0 = not found)
+    uint8_t  magPath   = 0;      // MPU magnetometer access: 0=none, 1=I2C bypass, 2=I2C master
+    uint8_t  magType   = 0;      // magnetometer type: 0=none, 1=AK8963, 2=HMC5883L, 3=QMC5883L
+    uint8_t  scanResults[117] = {};
+    uint8_t  scanCount = 0;      // number of I2C addresses that answered the bus scan
+
     void initSensor();
+    void scanI2CBus();
+    const char* statusText() const;
     void updateHeading();
     void trackCalibration();
     void finalizeCalibration();
