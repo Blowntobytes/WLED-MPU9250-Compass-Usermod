@@ -28,28 +28,34 @@ color/effect, so you can see at a glance which way is North.
 * **North sector display**: a configurable number of LEDs around the heading
   render in `northColor` + `northEffect`, the rest render in `otherColor` +
   `otherEffect`.
+* **Two sensor options** (auto-detected or selected in settings):
+  * **MPU-9250** 9-axis IMU — tilt-compensated heading, works even when not level.
+  * **GY-271** magnetometer breakout (HMC5883L or QMC5883L) — simple 2-axis heading, perfect for a flat-mounted compass.
 * **Full magnetometer calibration** built in: hard-iron offsets (bias) and
   soft-iron scaling (per-axis gain), either auto-computed with the on-device
   calibration routine or entered manually.
 * **Per-LED effect emulation**: solid, blink, breath, rainbow, rainbow cycle
   and twinkle on either group of LEDs (see [Effects](#effects)).
-* **JSON API** integration: live heading/pitch/roll and raw sensor data in
-  `/json/state`, calibration commands, and sensor readout on the Info page.
-* **No external libraries**: a minimal self-contained MPU-9250 driver is
-  bundled; it only uses the Arduino `Wire` core. No conflicts with WLED's
-  bundled libraries.
-* **Graceful failure**: if the sensor is not detected, `begin()` fails
-  gracefully, the usermod stays disabled and your strip behaves normally.
+* **JSON API** integration: live heading (plus pitch/roll for the MPU-9250)
+  and raw sensor data in `/json/state`, calibration commands, and sensor
+  readout on the Info page.
+* **No external libraries**: minimal self-contained drivers for the MPU-9250
+  and GY-271 are bundled; they only use the Arduino `Wire` core. No conflicts
+  with WLED's bundled libraries.
+* **Graceful failure**: if no sensor is detected, `begin()` fails gracefully,
+  the usermod stays disabled and your strip behaves normally.
 
 ## How it works
 
-* The MPU-9250 embeds an MPU-6500 (accel + gyro) and an AK8963 magnetometer.
-  The usermod enables the MPU's I2C bypass so the AK8963 is reachable on the
-  same bus at address `0x0C`.
-* Gravity is estimated from the accelerometer and used to derive roll/pitch.
-* The raw magnetic field is projected onto the horizontal plane using
-  roll/pitch (**tilt compensation**), then the magnetic heading is
-  `atan2(Yh, Xh)`.
+* **MPU-9250 mode**: the MPU-9250 embeds an MPU-6500 (accel + gyro) and an
+  AK8963 magnetometer. Gravity is estimated from the accelerometer and used
+  to derive roll/pitch; the raw magnetic field is then projected onto the
+  horizontal plane (**tilt compensation**), so the heading stays correct even
+  when the device isn't level.
+* **GY-271 mode**: a bare magnetometer (HMC5883L at `0x1E` or QMC5883L at
+  `0x0D`) gives the classic 2-axis heading `atan2(my, mx)`. There is no
+  accelerometer, so the module must be held (or mounted) **level** for an
+  accurate heading.
 * The heading (0–360°) is mapped onto the ring: LED `n` covers the angular
   range `n * 360 / totalLeds` … `(n+1) * 360 / totalLeds` degrees, and the
   `northSize` LEDs centred on the heading are the "North sector".
@@ -67,20 +73,21 @@ forward axis is +Y, or the ring's 0° LED is elsewhere), fix it with the
 
 ## Hardware & wiring
 
-| MPU-9250 (GY-9250 / GY-91) | ESP32   | ESP8266  |
-|----------------------------|---------|----------|
-| VCC                        | 3.3V    | 3.3V     |
-| GND                        | GND     | GND      |
-| SDA                        | GPIO 21 | GPIO 4   |
-| SCL                        | GPIO 22 | GPIO 5   |
-| AD0 (address select)       | GND -> 0x68, 3.3V -> 0x69 | | 
+| MPU-9250 (GY-9250 / GY-91) | GY-271 (HMC5883L / QMC5883L) | ESP32   | ESP8266  |
+|----------------------------|------------------------------|---------|----------|
+| VCC                        | VCC                          | 3.3V    | 3.3V     |
+| GND                        | GND                          | GND     | GND      |
+| SDA                        | SDA                          | GPIO 21 | GPIO 4   |
+| SCL                        | SCL                          | GPIO 22 | GPIO 5   |
+| AD0 (address select)       | —                            | GND -> 0x68, 3.3V -> 0x69 | |
 
 * Supply voltage 3–5 V (the module's on-board regulators handle 3.3 V logic;
   do **not** feed 5 V into SDA/SCL).
 * Pull-up resistors to 3.3 V on SDA/SCL are required (4.7 kΩ typical); most
   breakout boards already include them.
-* SDA/SCL pins and the I2C address (`0x68` / `0x69`) are configurable in the
-  usermod settings.
+* SDA/SCL pins are configurable in the usermod settings. For the MPU-9250 the
+  I2C address (`0x68` / `0x69`) is configurable too; the GY-271 is
+  auto-detected at `0x1E` (HMC5883L) or `0x0D` (QMC5883L).
 * The ring's first `totalLeds` LEDs (starting at LED 0) form the compass.
 
 ## Integration with WLED 16.0.0
@@ -141,6 +148,7 @@ editable on **Config → Usermod** in the WLED web UI.
 | `sdaPin`           | int     | `21` (ESP32)   | I2C SDA pin. |
 | `sclPin`           | int     | `22` (ESP32)   | I2C SCL pin. |
 | `i2cAddress`       | int     | `104` (0x68)   | MPU-9250 I2C address; `104` = 0x68, `105` = 0x69. |
+| `sensorType`       | int     | `0`            | `0` = auto-detect, `1` = MPU-9250 only, `2` = GY-271 (HMC5883L/QMC5883L) only. |
 | `totalLeds`        | int     | `60`           | Number of LEDs that form the compass ring (LEDs 0…totalLeds-1). |
 | `northColor`       | string  | `"FF0000"`     | Color (hex `RRGGBB`) of the North-sector LEDs. |
 | `northEffect`      | int     | `0`            | Effect index for the North-sector LEDs (0 = solid), see [Effects](#effects). |
@@ -229,6 +237,13 @@ The usermod exposes its live state under `MPU9250Compass` in `/json/state`:
 {
   "MPU9250Compass": {
     "sensorAvailable": true,
+    "status": "ok",
+    "sensorKind": 1,
+    "magType": 1,
+    "whoAmI": 113,
+    "magWhoAmI": 72,
+    "magPath": 1,
+    "i2cScan": [12, 104],
     "heading": 42.5,
     "pitch": -1.2,
     "roll": 0.8,
@@ -242,12 +257,24 @@ The usermod exposes its live state under `MPU9250Compass` in `/json/state`:
 }
 ```
 
-* `heading` is in degrees (0 = magnetic North, clockwise), already
-  tilt-compensated and smoothed.
-* `pitch` / `roll` are in degrees.
+* `heading` is in degrees (0 = magnetic North, clockwise), already smoothed.
+  In MPU-9250 mode it is also tilt-compensated.
+* `pitch` / `roll` are in degrees (MPU-9250 mode only; `n/a` for GY-271).
 * `mag` is the raw, factory-sensitivity-adjusted magnetometer reading
   (before hard/soft-iron correction).
 * `calMin`/`calMax` are only present while calibrating.
+
+**Diagnostics** (shown even when the sensor is offline — great for debugging):
+
+| Field | Meaning |
+|-------|---------|
+| `status` | Plain-language reason if the sensor is offline, e.g. `"magnetometer not found - this module appears to be an MPU-6500 without a compass"`. |
+| `sensorKind` | Active sensor: `1` = MPU-9250, `2` = GY-271, `0` = none. |
+| `magType` | Magnetometer found: `1` = AK8963 (MPU-9250), `2` = HMC5883L, `3` = QMC5883L, `0` = none. |
+| `whoAmI` | MPU-9250 chip ID (only in MPU mode). `113` (0x71) = genuine MPU-9250, `112` (0x70) or `104` (0x68) = clones, `0` = no reply. |
+| `magWhoAmI` | AK8963 chip ID (only in MPU mode). `72` (0x48) = genuine, `0` = not found. |
+| `magPath` | MPU magnetometer access: `1` = I2C bypass, `2` = internal I2C master, `0` = none. |
+| `i2cScan` | Every I2C address that answered a bus scan. MPU-9250: `104` (0x68) + `12` (0x0C). GY-271: `30` (0x1E, HMC5883L) or `13` (0x0D, QMC5883L). |
 
 Commands (POST to `/json/state`):
 
@@ -256,6 +283,8 @@ Commands (POST to `/json/state`):
 {"MPU9250Compass":{"calibrate":false}}       // stop + apply
 {"MPU9250Compass":{"saveCalibration":true}}  // apply calibration now
 {"MPU9250Compass":{"resetCalibration":true}} // clear calibration
+{"MPU9250Compass":{"scanI2C":true}}          // re-scan the I2C bus + re-init sensor
+{"MPU9250Compass":{"reinit":true}}           // re-initialise the sensor
 ```
 
 The Info page of the WLED UI also shows the live compass heading, pitch and
@@ -312,8 +341,12 @@ otherEffect = 8        ; rainbow
 
 | Symptom                              | Fix |
 |--------------------------------------|-----|
-| Info page shows "sensor offline"     | Check wiring (SDA/SCL swapped?), pull-ups, supply voltage, and `i2cAddress` (0x68 vs 0x69). |
-| No I2C devices found                 | Verify with a scanner sketch that the MPU-9250 answers at 0x68/0x69 and the AK8963 at 0x0C. |
+| Info page shows "sensor offline"     | Check `MPU9250Compass.i2cScan` in `/json/state`: if nothing responds, fix wiring/pins/pull-ups/power; if the sensor answers but `magWhoAmI` is 0, the magnetometer is missing (see below). |
+| Nothing on the I2C scan              | Wrong SDA/SCL pins, missing pull-up resistors, no power, or address mismatch. Double-check AD0 (0x68 = GND, 0x69 = 3.3V). |
+| ESP32-C3: sensor offline on GPIO 8/9 | Many ESP32-C3 boards use **GPIO8 for the onboard RGB LED** and **GPIO9 for the BOOT button** (e.g. DevKitM-1). Use other pins, e.g. GPIO4/5 or GPIO6/7. |
+| Sensor answers but `magWhoAmI` = 0   | Many cheap "MPU-9250" modules are actually **MPU-6500** chips (WHO_AM_I = 0x70) with no magnetometer — a compass can't work without it. The usermod probes both the I2C bypass and the internal I2C master path before concluding this. The chip's own WHO_AM_I register is the tell: `0x71` = genuine MPU-9250, `0x70` = MPU-6500 (no compass silicon). |
+| GY-271 mode: sensor offline          | Check the scan shows `30` (0x1E, HMC5883L) or `13` (0x0D, QMC5883L). If nothing: wiring/pins/power. If `magType` is 0 but the address appears, try `sensorType = 2` to skip MPU detection. |
+| GY-271 heading wrong when tilted     | Expected: a magnetometer-only module can't measure tilt. Mount the GY-271 **level** (the MPU-9250 mode provides tilt compensation instead). |
 | Heading is constant/wrong            | Run the calibration; check `useCalibration`; check `headingOffset` and the +X axis convention. |
 | Heading jitters                      | Increase `headingSmooth` (up to 100). |
 | North sector seems misaligned        | One LED = 360/`totalLeds` degrees; set `northSize` accordingly and use `headingOffset` to align. |

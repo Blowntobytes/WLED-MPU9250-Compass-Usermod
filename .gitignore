@@ -11,3 +11,4 @@ Thumbs.db
 # Build artifacts (should never appear in this repo)
 .pio/
 build_output/
+firmware/
