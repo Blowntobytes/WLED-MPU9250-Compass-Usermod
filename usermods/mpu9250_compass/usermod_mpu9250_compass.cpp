@@ -183,6 +183,7 @@ class Mpu9250Driver {
     uint8_t whoAmI() const    { return _whoAmI; }
     uint8_t magWhoAmI() const { return _magWhoAmI; }
     MagPath magPath() const   { return _magPath; }
+    bool magAvailable() const { return _magPath != MAG_NONE; }
 
     bool begin(uint8_t addr, int sda, int scl) {
       using namespace mpu9250;
@@ -209,16 +210,17 @@ class Mpu9250Driver {
       writeReg(_addr, REG_CONFIG, 0x03);
       writeReg(_addr, REG_GYRO_CONFIG, 0x08);   // +/-500 dps
       writeReg(_addr, REG_ACCEL_CONFIG, 0x00);  // +/-2 g
-      // magnetometer: try I2C bypass first, then the internal I2C master
+      // magnetometer (optional - some boards are MPU-6500 without one):
+      // try I2C bypass first, then the internal I2C master
       writeReg(_addr, REG_USER_CTRL, 0x00);     // master off while in bypass
       writeReg(_addr, REG_INT_PIN_CFG, 0x02);   // I2C bypass enable
       if (initMagBypass()) return true;
       if (initMagMaster()) return true;
-      return false; // no magnetometer reachable on this module
+      // no magnetometer: the accelerometer/gyroscope still work (tilt effects)
+      return true;
     }
 
-    // acc/gyr raw 16-bit; mag raw 16-bit (already multiplied by factory sens)
-    bool readAll(int16_t *acc, int16_t *gyr, int16_t *mag) {
+    bool readAccelGyro(int16_t *acc, int16_t *gyr) {
       using namespace mpu9250;
       uint8_t buf[14];
       if (!readRegs(_addr, REG_ACCEL_XOUT_H, buf, 14)) return false;
@@ -228,6 +230,12 @@ class Mpu9250Driver {
       gyr[0] = (int16_t)((buf[8]  << 8) | buf[9]);
       gyr[1] = (int16_t)((buf[10] << 8) | buf[11]);
       gyr[2] = (int16_t)((buf[12] << 8) | buf[13]);
+      return true;
+    }
+
+    // acc/gyr raw 16-bit; mag raw 16-bit (already multiplied by factory sens)
+    bool readAll(int16_t *acc, int16_t *gyr, int16_t *mag) {
+      if (!readAccelGyro(acc, gyr)) return false;
       return readMag(mag);
     }
 
@@ -348,6 +356,203 @@ class Gy271Driver {
 static Mpu9250Driver _mpuDriver;
 static Gy271Driver _gy271Driver;
 
+static Mpu9250Compass mpu9250_compass;
+
+/*
+ * Custom WLED effect: "Falling Sand".
+ *   - 1D strips: a single contiguous bag of sand (no gaps) whose grains
+ *     cascade one pixel at a time - one grain steps forward, a pause (set by
+ *     effect speed), then the next grain steps - so the bag slides down the
+ *     strip one pixel at a time, driven by tilt. Never vanishes or flickers.
+ *   - 2D matrices: a falling-sand grid; when it fills up it flips (falls the
+ *     other way) instead of vanishing.
+ * The tilt axis is selectable via the usermod `tiltAxis` setting:
+ *   0 = both axes, 1 = left/right only, 2 = forward/back only.
+ * Parameters (segment sliders):
+ *   speed     = pause between grains (1D) / pour rate (2D)
+ *   intensity = sand amount
+ *   custom1   = flow speed (2D only: simulation steps per frame)
+ */
+struct FallingSandData {
+  uint16_t w = 0;
+  uint16_t h = 0;
+  uint32_t lastNow = 0;
+  uint8_t  lastAxis = 0xFF;
+  // 1D bag state
+  uint16_t N = 0;          // number of sand grains in the bag
+  uint16_t cascadeStep = 0;// which grain moves next (one at a time)
+  int8_t   lastDir = 0;    // hysteresis (which way gravity points)
+  uint32_t lastFallMove = 0;
+  // 2D grid state
+  uint32_t sandCount = 0;
+  float    spawnAcc = 0.0f;
+  int8_t   lastSx = 0;
+  int8_t   lastSy = 0;
+  uint16_t flip2D = 0;     // 2D flip timer
+};
+
+static const char _data_FX_MODE_FALLING_SAND[] PROGMEM =
+  "Falling Sand@!,Sand amount,Flow;!,!;!;12;sx=128,ix=128,c1=64";
+
+static void mode_falling_sand() {
+  const uint16_t W = SEGMENT.virtualWidth();
+  const uint16_t H = SEGMENT.virtualHeight();
+  const size_t cells = (size_t)W * H;
+  if (cells == 0) return;
+  // 1D needs an int16 array for grain positions; 2D needs a byte grid
+  size_t need = (H == 1) ? (sizeof(FallingSandData) + (size_t)W * sizeof(int16_t))
+                         : (sizeof(FallingSandData) + cells);
+  if (!SEGENV.allocateData(need)) return;
+
+  FallingSandData *d    = reinterpret_cast<FallingSandData*>(SEGENV.data);
+  uint8_t         *tail = SEGENV.data + sizeof(FallingSandData);
+
+  if (d->w != W || d->h != H) {
+    memset(tail, 0, (H == 1) ? (size_t)W * sizeof(int16_t) : cells);
+    d->w = W; d->h = H;
+    d->sandCount = 0;
+    d->N = 0; d->cascadeStep = 0; d->lastDir = 0; d->lastFallMove = 0;
+    d->lastSx = 0; d->lastSy = 0;
+  }
+
+  const uint32_t now = strip.now;
+  uint32_t dt = now - d->lastNow;
+  if (dt == 0 || dt > 200) dt = 16; // first frame or a hiccup
+  d->lastNow = now;
+
+  // tilt: gravity direction on the display plane
+  float gx = mpu9250_compass.tiltGX();
+  float gy = mpu9250_compass.tiltGY();
+  uint8_t axis = mpu9250_compass.tiltAxisSel();
+  if (axis > 2) axis = 0;
+  if (d->lastAxis != axis) { d->lastAxis = axis; d->lastDir = 0; }
+
+  if (H == 1) {
+    // ---------------- 1D: bag of sand, ONE pixel moves at a time ----------------
+    // Grains cascade: one grain steps forward, a pause (effect speed), then the
+    // next grain steps, and so on - so the bag slides down the strip one pixel
+    // at a time instead of all together. No gaps between the grains.
+    uint16_t N = 2 + (SEGMENT.intensity * (W > 2 ? W - 2 : 1)) / 255;
+    if (N > W) N = W;
+    if (N < 1) N = 1;
+
+    int16_t *grain = reinterpret_cast<int16_t*>(tail); // W slots, positions per grain
+
+    // (re)place the bag when the size changed
+    if (d->N != N) {
+      d->N = N;
+      d->cascadeStep = 0;
+      for (uint16_t j = 0; j < N; j++) grain[j] = (int16_t)j; // bag sits at one end
+    }
+
+    // desired direction from the selected tilt axis (hysteresis)
+    float tilt = (axis == 2) ? gy : gx;
+    int8_t want = (tilt > 0.2f) ? 1 : (tilt < -0.2f ? -1 : 0);
+    if (want != 0) d->lastDir = want;
+    int8_t dir = d->lastDir;
+
+    // move ONE grain one step per tick; the pause is set by the speed slider
+    uint32_t tickInterval = 30 + (255 - SEGMENT.speed) * 3; // ~30ms..795ms
+    if (dir != 0 && (now - d->lastFallMove) >= tickInterval) {
+      d->lastFallMove = now;
+      if ((dir > 0 && grain[N-1] >= (int16_t)(W - 1)) || (dir < 0 && grain[0] <= 0)) {
+        d->cascadeStep = 0; // bag rests at the wall
+      } else {
+        uint16_t idx = (dir > 0) ? (uint16_t)(N - 1 - d->cascadeStep) : d->cascadeStep;
+        if (idx < N) {
+          grain[idx] += dir;
+          d->cascadeStep++;
+          if (d->cascadeStep >= N) d->cascadeStep = 0;
+        }
+      }
+    }
+
+    // render the bag (contiguous; one gap briefly travels through it while cascading)
+    SEGMENT.fill(SEGCOLOR(1));
+    for (uint16_t j = 0; j < N; j++)
+      if (grain[j] >= 0 && grain[j] < (int16_t)W)
+        SEGMENT.setPixelColor((uint16_t)grain[j], ColorFromPalette(SEGPALETTE, (uint8_t)((grain[j] * 256u) / W), 255, LINEARBLEND));
+    return;
+  }
+
+  // ---------------- 2D: falling sand that flips on full ----------------
+  uint8_t *sand = tail;
+
+  // ---------------- 2D: falling sand that flips on full ----------------
+  int8_t sx, sy;
+  {
+    float dirX = (axis == 2) ? 0.0f : gx;
+    float dirY = (axis == 1) ? 1.0f : gy;
+    if (dirX > 0.25f) d->lastSx = 1; else if (dirX < -0.25f) d->lastSx = -1;
+    if (dirY > 0.25f) d->lastSy = 1; else if (dirY < -0.25f) d->lastSy = -1;
+    sx = d->lastSx; sy = d->lastSy;
+    if (sx == 0 && sy == 0) sy = 1;
+  }
+
+  const uint32_t maxSand = (uint32_t)(cells * (0.2f + 0.5f * SEGMENT.intensity / 255.0f)) + 1;
+  const uint8_t  flow    = 1 + (SEGMENT.custom1 >> 5); // 1..8 substeps/frame
+
+  // when full, flip over (fall the other way for a moment) instead of vanishing
+  if (d->flip2D == 0 && d->sandCount >= maxSand) d->flip2D = 60;
+  if (d->flip2D > 0) {
+    d->flip2D--;
+    sx = -sx; sy = -sy;
+  } else {
+    // pour sand (time based, fractional grains)
+    float pourPerSec = 0.04f + 0.3f * SEGMENT.speed / 255.0f;
+    d->spawnAcc += pourPerSec * (float)dt / 1000.0f * (float)cells;
+    uint32_t toSpawn = (uint32_t)d->spawnAcc;
+    d->spawnAcc -= (float)toSpawn;
+    for (uint32_t g = 0; g < toSpawn && d->sandCount < cells; g++) {
+      uint16_t y = (sy < 0) ? (H - 1) : 0; // pour from the edge opposite gravity
+      uint16_t x = (W > 1) ? hw_random16(W) : 0;
+      size_t idx = (size_t)y * W + x;
+      if (sand[idx] == 0) { sand[idx] = 1; d->sandCount++; }
+    }
+  }
+
+  // falling sand update, iterating in the opposite order of gravity
+  int spreadX = (sx == 0) ? 1 : 0;
+  int spreadY = (sx == 0) ? 0 : 1;
+  for (uint8_t step = 0; step < flow; step++) {
+    int y0 = (sy > 0) ? (int)H - 1 : 0;
+    int y1 = (sy > 0) ? -1 : (int)H;
+    int yi = (sy > 0) ? -1 : 1;
+    for (int y = y0; y != y1; y += yi) {
+      int x0 = (sx > 0) ? (int)W - 1 : 0;
+      int x1 = (sx > 0) ? -1 : (int)W;
+      int xi = (sx > 0) ? -1 : 1;
+      for (int x = x0; x != x1; x += xi) {
+        size_t idx = (size_t)y * W + x;
+        if (sand[idx] == 0) continue;
+        int cand[3][2] = {
+          { x + sx,           y + sy           },
+          { x + sx + spreadX, y + sy + spreadY },
+          { x + sx - spreadX, y + sy - spreadY }
+        };
+        int order[3] = { 0, 1, 2 };
+        if (hw_random8() & 1) { order[1] = 2; order[2] = 1; }
+        bool moved = false;
+        for (int c = 0; c < 3 && !moved; c++) {
+          int nx = cand[order[c]][0], ny = cand[order[c]][1];
+          if (nx >= 0 && nx < (int)W && ny >= 0 && ny < (int)H && sand[(size_t)ny * W + nx] == 0) {
+            sand[(size_t)ny * W + nx] = 1;
+            sand[idx] = 0;
+            moved = true;
+          }
+        }
+      }
+    }
+  }
+
+  // render: sand coloured from the segment palette (horizontal gradient)
+  SEGMENT.fill(SEGCOLOR(1));
+  for (uint16_t y = 0; y < H; y++)
+    for (uint16_t x = 0; x < W; x++)
+      if (sand[(size_t)y * W + x])
+        SEGMENT.setPixelColorXY(x, y, ColorFromPalette(SEGPALETTE, (uint8_t)((x * 256u) / W), 255, LINEARBLEND));
+}
+
 const char Mpu9250Compass::_name[] PROGMEM = "MPU9250Compass";
 
 /* ---------------------------------------------------------------- setup */
@@ -357,16 +562,21 @@ void Mpu9250Compass::initSensor() {
   _initSda  = sdaPin;
   _initScl  = sclPin;
   _sensorKind = 0;
+  _accelOK = false;
+  _magOK = false;
   sensorAvailable = false;
   whoAmI = 0; magWhoAmI = 0; magPath = 0; magType = 0;
 
   if (sensorEnabled) {
     if (sensorType != 2 && _mpuDriver.begin(i2cAddress, sdaPin, sclPin)) {
-      _sensorKind = 1; // MPU-9250 with AK8963 (tilt compensated)
+      _sensorKind = 1; // MPU core works (accelerometer usable for tilt)
+      _accelOK = true;
+      _magOK = _mpuDriver.magAvailable(); // magnetometer is optional
       sensorAvailable = true;
     }
     if (!sensorAvailable && sensorType != 1 && _gy271Driver.begin(sdaPin, sclPin)) {
-      _sensorKind = 2; // GY-271 (HMC5883L or QMC5883L)
+      _sensorKind = 2; // GY-271 (HMC5883L or QMC5883L), magnetometer only
+      _magOK = true;
       sensorAvailable = true;
     }
   }
@@ -374,7 +584,7 @@ void Mpu9250Compass::initSensor() {
   magWhoAmI = _mpuDriver.magWhoAmI();
   magPath   = (uint8_t)_mpuDriver.magPath();
   magType   = (_sensorKind == 2) ? (uint8_t)_gy271Driver.magType()
-                                 : (sensorAvailable ? 1 : 0);
+                                 : (_magOK ? 1 : 0);
   scanI2CBus();
   readErrors = 0;
   if (sensorAvailable) lastSample = 0;
@@ -390,26 +600,21 @@ void Mpu9250Compass::scanI2CBus() {
 }
 
 const char* Mpu9250Compass::statusText() const {
-  if (sensorAvailable) return "ok";
+  if (_magOK) return "ok";
   if (sensorType == 2)
     return "GY-271 magnetometer not found - check wiring and pins (HMC5883L at 0x1E / QMC5883L at 0x0D)";
-  if (sensorType == 1) {
-    if (whoAmI == 0) return "no reply at i2cAddress - check wiring, pins and power";
-    if (magWhoAmI == 0) return "magnetometer not found (checked I2C bypass and I2C master) - this module appears to be an MPU-6500 without a compass";
-    return "sensor error";
-  }
-  // auto mode
-  if (whoAmI != 0 && magWhoAmI == 0)
-    return "MPU found without magnetometer (checked I2C bypass and I2C master) - this module appears to be an MPU-6500 without a compass";
+  if (_accelOK)
+    return "MPU accelerometer OK - no magnetometer (compass unavailable, tilt effects work)";
   if (whoAmI == 0)
     return "no MPU-9250 and no GY-271 magnetometer found - check wiring, pins and power";
-  return "sensor error";
+  return "magnetometer not found (checked I2C bypass and I2C master) - this module appears to be an MPU-6500 without a compass";
 }
 
 void Mpu9250Compass::setup() {
   initialized = true;
   parseColor(northColorStr, _northColor);
   parseColor(otherColorStr, _otherColor);
+  strip.addEffect(255, &mode_falling_sand, _data_FX_MODE_FALLING_SAND);
   initSensor();
 }
 
@@ -426,8 +631,12 @@ void Mpu9250Compass::loop() {
   lastSample = millis();
 
   bool ok = false;
-  if (_sensorKind == 1) ok = _mpuDriver.readAll(acc, gyr, mag);
-  else if (_sensorKind == 2) ok = _gy271Driver.readMag(mag);
+  if (_sensorKind == 1) {
+    ok = _mpuDriver.readAccelGyro(acc, gyr);
+    if (ok && _magOK) _mpuDriver.readMag(mag); // best effort; keep last mag on failure
+  } else if (_sensorKind == 2) {
+    ok = _gy271Driver.readMag(mag);
+  }
 
   if (ok) {
     readErrors = 0;
@@ -450,10 +659,30 @@ void Mpu9250Compass::updateHeading() {
   constexpr float PI_F = 3.14159265358979f;
   constexpr float ACCEL_SCALE = 2.0f / 32767.0f; // +/-2 g full scale
 
-  float h;
-  pitch = 0.0f;
-  roll  = 0.0f;
+  // tilt: gravity direction projected on the display plane (drives Falling Sand)
+  if (_accelOK) {
+    float ax = (float)acc[0] * ACCEL_SCALE;
+    float ay = (float)acc[1] * ACCEL_SCALE;
+    float az = (float)acc[2] * ACCEL_SCALE;
+    float gx = -ax, gy = -ay;
+    float m = sqrtf(gx * gx + gy * gy);
+    float ngx, ngy;
+    if (m > 0.15f) { ngx = gx / m; ngy = gy / m; }
+    else           { ngx = 0.0f;  ngy = 1.0f; }   // level: fall straight down
+    // low-pass the gravity vector to remove accelerometer jitter (less flicker)
+    float a = 0.3f;
+    _gx = _gx * (1.0f - a) + ngx * a;
+    _gy = _gy * (1.0f - a) + ngy * a;
+    float nm = sqrtf(_gx * _gx + _gy * _gy);
+    if (nm > 0.01f) { _gx /= nm; _gy /= nm; }
+    roll  = atan2f(ay, az) * 180.0f / PI_F;
+    pitch = atan2f(-ax, sqrtf(ay * ay + az * az)) * 180.0f / PI_F;
+  } else {
+    pitch = 0.0f;
+    roll  = 0.0f;
+  }
 
+  float h;
   if (_sensorKind == 2) {
     // GY-271 magnetometer only: simple 2-axis heading, module must be level
     float mx = (float)mag[0] - (float)magOffset[0];
@@ -463,7 +692,7 @@ void Mpu9250Compass::updateHeading() {
       my *= magScale[1];
     }
     h = atan2f(my, mx) * 180.0f / PI_F;
-  } else {
+  } else if (_magOK) {
     // accelerometer in g
     float ax = (float)acc[0] * ACCEL_SCALE;
     float ay = (float)acc[1] * ACCEL_SCALE;
@@ -491,8 +720,8 @@ void Mpu9250Compass::updateHeading() {
 
     // heading, degrees, clockwise from the sensor +X axis toward magnetic north
     h = atan2f(Yh, Xh) * 180.0f / PI_F;
-    pitch = p * 180.0f / PI_F;
-    roll  = r * 180.0f / PI_F;
+  } else {
+    return; // no magnetometer: heading unavailable, tilt still valid
   }
 
   h += headingOffset;
@@ -619,7 +848,7 @@ uint32_t Mpu9250Compass::applyEffect(uint32_t base, uint8_t effect,
 /* ------------------------------------------------------ overlay draw */
 
 void Mpu9250Compass::handleOverlayDraw() {
-  if (!sensorEnabled || !sensorAvailable) return;
+  if (!sensorEnabled || !overlayEnabled || !_magOK) return;
 
   uint16_t ring = totalLeds;
   uint16_t stripLen = strip.getLengthTotal();
@@ -650,10 +879,12 @@ void Mpu9250Compass::handleOverlayDraw() {
 void Mpu9250Compass::addToConfig(JsonObject& root) {
   JsonObject top = root.createNestedObject(FPSTR(_name));
   top["sensorEnabled"] = sensorEnabled;
+  top["overlayEnabled"] = overlayEnabled;
   top["sdaPin"]  = sdaPin;
   top["sclPin"]  = sclPin;
   top["i2cAddress"] = i2cAddress;
   top["sensorType"] = sensorType;
+  top["tiltAxis"] = tiltAxis;
   top["totalLeds"]  = totalLeds;
   top["northColor"] = northColorStr;
   top["northEffect"] = northEffect;
@@ -676,11 +907,14 @@ bool Mpu9250Compass::readFromConfig(JsonObject& root) {
   bool complete = !top.isNull();
 
   complete &= getJsonValue(top["sensorEnabled"], sensorEnabled, true);
+  complete &= getJsonValue(top["overlayEnabled"], overlayEnabled, true);
   complete &= getJsonValue(top["sdaPin"],  sdaPin,  MPU9250_DEFAULT_SDA);
   complete &= getJsonValue(top["sclPin"],  sclPin,  MPU9250_DEFAULT_SCL);
   complete &= getJsonValue(top["i2cAddress"], i2cAddress, (uint8_t)0x68);
   complete &= getJsonValue(top["sensorType"], sensorType, (uint8_t)0);
   if (sensorType > 2) sensorType = 0;
+  complete &= getJsonValue(top["tiltAxis"], tiltAxis, (uint8_t)0);
+  if (tiltAxis > 2) tiltAxis = 0;
   complete &= getJsonValue(top["totalLeds"],   totalLeds, (uint16_t)60);
   complete &= getJsonValue(top["northEffect"], northEffect, (uint8_t)0);
   complete &= getJsonValue(top["northSize"],   northSize,   (uint16_t)3);
@@ -714,6 +948,8 @@ void Mpu9250Compass::addToJsonState(JsonObject& obj) {
   JsonObject top = obj.createNestedObject(FPSTR(_name));
   top["sensorAvailable"] = sensorAvailable;
   top["status"] = statusText();
+  top["accelAvailable"] = _accelOK;
+  top["magAvailable"]   = _magOK;
   // diagnostics are reported even when the sensor is offline, so you can see
   // exactly what the I2C bus responds with
   top["whoAmI"]    = whoAmI;    // 0x71 genuine MPU-9250, 0x70/0x68 clones, 0 = no reply
@@ -721,6 +957,9 @@ void Mpu9250Compass::addToJsonState(JsonObject& obj) {
   top["magPath"]   = magPath;   // MPU mag access: 0=none, 1=I2C bypass, 2=I2C master
   top["magType"]   = magType;   // 0=none, 1=AK8963, 2=HMC5883L, 3=QMC5883L
   top["sensorKind"] = _sensorKind; // 0=none, 1=MPU-9250, 2=GY-271
+  top["tiltAxis"]   = tiltAxis;    // Falling Sand tilt axis: 0=both, 1=left/right, 2=forward/back
+  top["tiltX"]      = _gx;         // gravity on display X (-1..1)
+  top["tiltY"]      = _gy;         // gravity on display Y (-1..1)
   JsonArray scan = top.createNestedArray("i2cScan");
   for (uint8_t i = 0; i < scanCount; i++) scan.add(scanResults[i]);
   if (sensorAvailable) {
@@ -792,5 +1031,4 @@ void Mpu9250Compass::addToJsonInfo(JsonObject& root) {
   }
 }
 
-static Mpu9250Compass mpu9250_compass;
 REGISTER_USERMOD(mpu9250_compass);

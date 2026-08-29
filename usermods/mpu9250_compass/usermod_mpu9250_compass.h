@@ -49,10 +49,12 @@ class Mpu9250Compass : public Usermod {
 
     // ---- persistent settings (cfg.json / usermod settings UI) ----
     bool     sensorEnabled   = true;
+    bool     overlayEnabled  = true;   // compass LED overlay (requires a magnetometer)
     int      sdaPin          = MPU9250_DEFAULT_SDA;
     int      sclPin          = MPU9250_DEFAULT_SCL;
     uint8_t  i2cAddress      = 0x68;
     uint8_t  sensorType      = 0;       // 0 = auto, 1 = MPU-9250, 2 = GY-271 (HMC5883L/QMC5883L)
+    uint8_t  tiltAxis        = 0;       // tilt effects: 0 = both, 1 = left/right only, 2 = forward/back only
     uint16_t totalLeds       = 60;      // size of the compass ring (LEDs)
     char     northColorStr[8] = "FF0000";  // RRGGBB
     char     otherColorStr[8] = "0022FF";  // RRGGBB
@@ -69,6 +71,9 @@ class Mpu9250Compass : public Usermod {
     bool     sensorAvailable = false;
     bool     initialized     = false;
     uint8_t  _sensorKind     = 0;       // 0 = none, 1 = MPU-9250, 2 = GY-271
+    bool     _accelOK        = false;   // accelerometer data usable (tilt effects)
+    bool     _magOK          = false;   // magnetometer usable (compass)
+    float    _gx = 0.0f, _gy = 1.0f;    // gravity direction on the screen plane (for tilt effects)
     uint8_t  _initAddr       = 0;
     int      _initSda        = -1;
     int      _initScl        = -1;
@@ -120,4 +125,11 @@ class Mpu9250Compass : public Usermod {
     void readFromJsonState(JsonObject& obj) override;
     void addToJsonInfo(JsonObject& obj) override;
     uint16_t getId() override { return USERMOD_ID_UNSPECIFIED; }
+
+    // tilt data used by the registered "Falling Sand" effect
+    // (gx, gy) = unit vector of gravity projected on the display plane
+    inline float tiltGX() const { return _gx; }
+    inline float tiltGY() const { return _gy; }
+    inline bool  tiltAvailable() const { return _accelOK; }
+    inline uint8_t tiltAxisSel() const { return tiltAxis; }
 };
