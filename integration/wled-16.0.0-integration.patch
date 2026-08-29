@@ -64,10 +64,10 @@ index 0000000..2bafdd5
 \ No newline at end of file
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
 new file mode 100644
-index 0000000..276dd25
+index 0000000..e8caecc
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
-@@ -0,0 +1,1149 @@
+@@ -0,0 +1,1161 @@
 +/*
 + * WLED usermod: MPU-9250 compass LED display (implementation)
 + * See usermod_mpu9250_compass.h for details.
@@ -1192,6 +1192,7 @@ index 0000000..276dd25
 +  JsonArray hInfo = user.createNestedArray("Compass heading");
 +  JsonArray pInfo = user.createNestedArray("Pitch");
 +  JsonArray rInfo = user.createNestedArray("Roll");
++  JsonArray mInfo = user.createNestedArray("Magnetometer");
 +  if (!sensorAvailable) {
 +    hInfo.add(statusText());
 +    hInfo.add(F(""));
@@ -1199,10 +1200,21 @@ index 0000000..276dd25
 +    pInfo.add(F(""));
 +    rInfo.add(F(""));
 +    rInfo.add(F(""));
++    mInfo.add(F("not detected"));
++    mInfo.add(F(""));
 +    return;
 +  }
-+  hInfo.add(heading);
-+  hInfo.add(" deg");
++  if (_magOK) {
++    hInfo.add(heading);
++    hInfo.add(" deg");
++    mInfo.add(F("OK"));
++    mInfo.add(F(""));
++  } else {
++    hInfo.add(F("n/a"));
++    hInfo.add(F(""));
++    mInfo.add(F("not detected - compass unavailable"));
++    mInfo.add(F(""));
++  }
 +  if (_sensorKind == 1) {
 +    pInfo.add(pitch);
 +    pInfo.add(" deg");

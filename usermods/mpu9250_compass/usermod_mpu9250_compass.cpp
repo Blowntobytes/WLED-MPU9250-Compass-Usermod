@@ -1122,6 +1122,7 @@ void Mpu9250Compass::addToJsonInfo(JsonObject& root) {
   JsonArray hInfo = user.createNestedArray("Compass heading");
   JsonArray pInfo = user.createNestedArray("Pitch");
   JsonArray rInfo = user.createNestedArray("Roll");
+  JsonArray mInfo = user.createNestedArray("Magnetometer");
   if (!sensorAvailable) {
     hInfo.add(statusText());
     hInfo.add(F(""));
@@ -1129,10 +1130,21 @@ void Mpu9250Compass::addToJsonInfo(JsonObject& root) {
     pInfo.add(F(""));
     rInfo.add(F(""));
     rInfo.add(F(""));
+    mInfo.add(F("not detected"));
+    mInfo.add(F(""));
     return;
   }
-  hInfo.add(heading);
-  hInfo.add(" deg");
+  if (_magOK) {
+    hInfo.add(heading);
+    hInfo.add(" deg");
+    mInfo.add(F("OK"));
+    mInfo.add(F(""));
+  } else {
+    hInfo.add(F("n/a"));
+    hInfo.add(F(""));
+    mInfo.add(F("not detected - compass unavailable"));
+    mInfo.add(F(""));
+  }
   if (_sensorKind == 1) {
     pInfo.add(pitch);
     pInfo.add(" deg");
