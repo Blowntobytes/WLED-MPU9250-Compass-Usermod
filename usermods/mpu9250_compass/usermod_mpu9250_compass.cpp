@@ -591,6 +591,66 @@ static void mode_falling_sand() {
         SEGMENT.setPixelColorXY(x, y, ColorFromPalette(SEGPALETTE, (uint8_t)((x * 256u) / W), 255, LINEARBLEND));
 }
 
+/*
+ * Custom WLED effect: "Bubble Level".
+ * A spirit level on the strip: a bubble (configurable size) floats opposite
+ * gravity and sits centred when the device is level. The bubble and the
+ * background are coloured from the segment palette using two selectable
+ * palette indices, so any WLED palette can be used.
+ * Parameters (segment sliders):
+ *   speed     = responsiveness (how fast the bubble tracks tilt)
+ *   intensity = bubble size (number of LEDs)
+ *   custom1   = bubble palette index
+ *   custom2   = background palette index
+ */
+static const char _data_FX_MODE_BUBBLE_LEVEL[] PROGMEM =
+  "Bubble Level@Smooth,Bubble size,Bubble color,Bg color;!,!;!;12;sx=128,ix=64,c1=0,c2=160";
+
+static void mode_bubble_level() {
+  const uint16_t W = SEGMENT.virtualWidth();
+  const uint16_t H = SEGMENT.virtualHeight();
+  if (W == 0) return;
+  if (!SEGENV.allocateData(sizeof(float))) return; // smoothed bubble centre
+  float *cx = reinterpret_cast<float*>(SEGENV.data);
+  if (SEGENV.call == 0) *cx = (float)W * 0.5f;
+
+  float gx = mpu9250_compass.tiltGX();
+  float gy = mpu9250_compass.tiltGY();
+  uint8_t axis = mpu9250_compass.tiltAxisSel();
+  if (axis > 2) axis = 0;
+  float tilt = (axis == 2) ? gy : gx; // which tilt drives the bubble
+
+  uint16_t size = 1 + (SEGMENT.intensity * (W - 1)) / 255; // bubble size (LEDs)
+  if (size > W) size = W;
+  int16_t half = (int16_t)size / 2;
+
+  // target centre: the bubble floats opposite gravity, centred when level
+  float range  = (float)(W - size) * 0.5f;
+  float target = (float)W * 0.5f - tilt * range;
+
+  // smooth the centre; speed sets how quickly it tracks the tilt
+  float a = 0.2f + (float)SEGMENT.speed / 255.0f * 0.6f;
+  *cx = *cx * (1.0f - a) + target * a;
+  if (*cx < 0.0f) *cx = 0.0f;
+  if (*cx > (float)W) *cx = (float)W;
+
+  int16_t c0 = (int16_t)(*cx) - half;
+  int16_t c1 = c0 + (int16_t)size - 1;
+
+  uint32_t bubbleCol = ColorFromPalette(SEGPALETTE, SEGMENT.custom1, 255, LINEARBLEND);
+  uint32_t bgCol     = ColorFromPalette(SEGPALETTE, SEGMENT.custom2, 255, LINEARBLEND);
+
+  SEGMENT.fill(bgCol);
+  if (H == 1) {
+    for (int16_t i = c0; i <= c1; i++)
+      if (i >= 0 && i < (int16_t)W) SEGMENT.setPixelColor((uint16_t)i, bubbleCol);
+  } else {
+    for (int16_t i = c0; i <= c1; i++)
+      if (i >= 0 && i < (int16_t)W)
+        for (uint16_t y = 0; y < H; y++) SEGMENT.setPixelColorXY((uint16_t)i, y, bubbleCol);
+  }
+}
+
 const char Mpu9250Compass::_name[] PROGMEM = "MPU9250Compass";
 
 /* ---------------------------------------------------------------- setup */
@@ -653,6 +713,7 @@ void Mpu9250Compass::setup() {
   parseColor(northColorStr, _northColor);
   parseColor(otherColorStr, _otherColor);
   strip.addEffect(255, &mode_falling_sand, _data_FX_MODE_FALLING_SAND);
+  strip.addEffect(255, &mode_bubble_level, _data_FX_MODE_BUBBLE_LEVEL);
   initSensor();
 }
 

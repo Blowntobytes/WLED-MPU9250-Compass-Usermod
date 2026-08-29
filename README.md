@@ -40,6 +40,8 @@ color/effect, so you can see at a glance which way is North.
   whose gravity direction follows the sensor's tilt — works on both 1D strips
   and 2D matrices, and needs only the accelerometer (so it works on a plain
   MPU-6500 with no magnetometer).
+* **"Bubble Level" effect**: a tilt-driven spirit level — a configurable-size
+  bubble floats opposite gravity, coloured from any palette.
 * **JSON API** integration: live heading (plus pitch/roll for the MPU-9250)
   and raw sensor data in `/json/state`, calibration commands, and sensor
   readout on the Info page.
@@ -119,6 +121,27 @@ steady (no flicker) while the device is level.
 > If you have a magnetometer and the compass overlay is also enabled
 > (`overlayEnabled`), the compass will paint over the sand — set
 > `overlayEnabled = false` to show only the Falling Sand effect.
+
+### Bubble Level effect
+
+The usermod also registers a **"Bubble Level"** effect — a spirit level on the
+strip. A **bubble** (configurable size) floats **opposite gravity** and sits
+centred when the device is level. Tilt the strip and the bubble slides to the
+raised end.
+
+Select it as the effect for your segment and use its sliders:
+
+| Slider | Effect |
+|--------|--------|
+| Effect speed   | Responsiveness — how fast the bubble tracks the tilt |
+| Effect intensity | Bubble size (number of LEDs) |
+| Custom 1       | Bubble colour: palette index used for the bubble |
+| Custom 2       | Background colour: palette index used for the rest of the strip |
+
+The bubble and background are coloured from the segment's **palette** (pick
+any WLED palette in the segment's palette dropdown, then choose a colour
+position for each area with the two sliders). On a 2D matrix the bubble is a
+vertical bar.
 
 ## Hardware & wiring
 
