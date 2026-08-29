@@ -36,6 +36,10 @@ color/effect, so you can see at a glance which way is North.
   calibration routine or entered manually.
 * **Per-LED effect emulation**: solid, blink, breath, rainbow, rainbow cycle
   and twinkle on either group of LEDs (see [Effects](#effects)).
+* **"Falling Sand" effect**: a new WLED effect (falling-sand simulation)
+  whose gravity direction follows the sensor's tilt — works on both 1D strips
+  and 2D matrices, and needs only the accelerometer (so it works on a plain
+  MPU-6500 with no magnetometer).
 * **JSON API** integration: live heading (plus pitch/roll for the MPU-9250)
   and raw sensor data in `/json/state`, calibration commands, and sensor
   readout on the Info page.
@@ -70,6 +74,49 @@ Heading `0°` corresponds to the sensor's **+X axis** pointing towards
 viewed from above (+Z up). If your sensor is mounted differently (e.g. the
 forward axis is +Y, or the ring's 0° LED is elsewhere), fix it with the
 `headingOffset` setting — see [Examples](#examples).
+
+### Falling Sand effect
+
+The usermod registers a custom effect called **"Falling Sand"** in the
+WLED effect list. It is modelled on WLED's built-in **PS Hourglass** but
+driven by the sensor's tilt:
+
+* **1D strips**: the sand is **one contiguous bag** (no gaps) whose grains
+  **cascade one pixel at a time** — one grain steps forward, a pause (set by
+  the **effect speed** slider), then the next grain steps, and so on — so the
+  bag slides down the strip one pixel at a time as you tilt, instead of all
+  pixels moving together. It never vanishes and never flickers.
+* **2D matrices**: a falling-sand grid; when it fills up it flips and falls
+  the other way instead of disappearing.
+
+Only the **accelerometer** is needed — it works with a genuine MPU-9250 *and*
+with a plain MPU-6500 that has no magnetometer. Without any sensor the sand
+simply falls straight down.
+
+Select it as the effect for your segment, then use its sliders:
+
+| Slider | Effect |
+|--------|--------|
+| Effect speed   | Drip interval (higher = faster) |
+| Effect intensity | Sand amount |
+| Custom 1       | Flow speed (2D only: simulation steps per frame) |
+
+The `tiltAxis` usermod setting selects which tilt direction drives the sand:
+
+| `tiltAxis` | Behaviour |
+|------------|-----------|
+| `0` (default) | Both axes |
+| `1` | **Left/right only** (roll) — forward/back tilt is ignored |
+| `2` | **Forward/back only** (pitch) — left/right tilt is ignored |
+
+The sand is coloured from the segment's **palette** (a gradient along the
+strip/matrix), so any of WLED's built-in or custom palettes can be used. The
+**secondary color** is the background. A directional dead-zone keeps the sand
+steady (no flicker) while the device is level.
+
+> If you have a magnetometer and the compass overlay is also enabled
+> (`overlayEnabled`), the compass will paint over the sand — set
+> `overlayEnabled = false` to show only the Falling Sand effect.
 
 ## Hardware & wiring
 
@@ -145,10 +192,12 @@ editable on **Config → Usermod** in the WLED web UI.
 | Key                | Type    | Default        | Description |
 |--------------------|---------|----------------|-------------|
 | `sensorEnabled`    | bool    | `true`         | Master switch for the usermod. |
+| `overlayEnabled`   | bool    | `true`         | Compass LED overlay on/off (needs a magnetometer). Turn off to let the Hourglass (tilt) effect show unobstructed. |
 | `sdaPin`           | int     | `21` (ESP32)   | I2C SDA pin. |
 | `sclPin`           | int     | `22` (ESP32)   | I2C SCL pin. |
 | `i2cAddress`       | int     | `104` (0x68)   | MPU-9250 I2C address; `104` = 0x68, `105` = 0x69. |
 | `sensorType`       | int     | `0`            | `0` = auto-detect, `1` = MPU-9250 only, `2` = GY-271 (HMC5883L/QMC5883L) only. |
+| `tiltAxis`         | int     | `0`            | Falling Sand tilt axis: `0` = both, `1` = left/right only, `2` = forward/back only. |
 | `totalLeds`        | int     | `60`           | Number of LEDs that form the compass ring (LEDs 0…totalLeds-1). |
 | `northColor`       | string  | `"FF0000"`     | Color (hex `RRGGBB`) of the North-sector LEDs. |
 | `northEffect`      | int     | `0`            | Effect index for the North-sector LEDs (0 = solid), see [Effects](#effects). |
@@ -270,6 +319,8 @@ The usermod exposes its live state under `MPU9250Compass` in `/json/state`:
 |-------|---------|
 | `status` | Plain-language reason if the sensor is offline, e.g. `"magnetometer not found - this module appears to be an MPU-6500 without a compass"`. |
 | `sensorKind` | Active sensor: `1` = MPU-9250, `2` = GY-271, `0` = none. |
+| `accelAvailable` | Accelerometer usable (drives the Falling Sand tilt effect). |
+| `magAvailable` | Magnetometer usable (drives the compass). |
 | `magType` | Magnetometer found: `1` = AK8963 (MPU-9250), `2` = HMC5883L, `3` = QMC5883L, `0` = none. |
 | `whoAmI` | MPU-9250 chip ID (only in MPU mode). `113` (0x71) = genuine MPU-9250, `112` (0x70) or `104` (0x68) = clones, `0` = no reply. |
 | `magWhoAmI` | AK8963 chip ID (only in MPU mode). `72` (0x48) = genuine, `0` = not found. |
@@ -344,7 +395,7 @@ otherEffect = 8        ; rainbow
 | Info page shows "sensor offline"     | Check `MPU9250Compass.i2cScan` in `/json/state`: if nothing responds, fix wiring/pins/pull-ups/power; if the sensor answers but `magWhoAmI` is 0, the magnetometer is missing (see below). |
 | Nothing on the I2C scan              | Wrong SDA/SCL pins, missing pull-up resistors, no power, or address mismatch. Double-check AD0 (0x68 = GND, 0x69 = 3.3V). |
 | ESP32-C3: sensor offline on GPIO 8/9 | Many ESP32-C3 boards use **GPIO8 for the onboard RGB LED** and **GPIO9 for the BOOT button** (e.g. DevKitM-1). Use other pins, e.g. GPIO4/5 or GPIO6/7. |
-| Sensor answers but `magWhoAmI` = 0   | Many cheap "MPU-9250" modules are actually **MPU-6500** chips (WHO_AM_I = 0x70) with no magnetometer — a compass can't work without it. The usermod probes both the I2C bypass and the internal I2C master path before concluding this. The chip's own WHO_AM_I register is the tell: `0x71` = genuine MPU-9250, `0x70` = MPU-6500 (no compass silicon). |
+| Sensor answers but `magWhoAmI` = 0   | Many cheap "MPU-9250" modules are actually **MPU-6500** chips (WHO_AM_I = 0x70) with no magnetometer — a compass can't work without it. The usermod probes both the I2C bypass and the internal I2C master path before concluding this. **The accelerometer still works**, so the "Hourglass (tilt)" effect functions normally; only the compass is unavailable. |
 | GY-271 mode: sensor offline          | Check the scan shows `30` (0x1E, HMC5883L) or `13` (0x0D, QMC5883L). If nothing: wiring/pins/power. If `magType` is 0 but the address appears, try `sensorType = 2` to skip MPU detection. |
 | GY-271 heading wrong when tilted     | Expected: a magnetometer-only module can't measure tilt. Mount the GY-271 **level** (the MPU-9250 mode provides tilt compensation instead). |
 | Heading is constant/wrong            | Run the calibration; check `useCalibration`; check `headingOffset` and the +X axis convention. |
