@@ -82,11 +82,12 @@ WLED effect list. It is modelled on WLED's built-in **PS Hourglass** but
 driven by the sensor's tilt:
 
 * **1D strips**: the lit sand pile **sheds one pixel at a time** from the side
-  opposite gravity (the grain falls across the strip) and the low side
-  **accumulates one pixel at a time**. Piles stay contiguous (no gaps) and
-  exactly one grain is ever in flight; **effect speed** sets the pause between
-  grains. Level the device to stop the flow; reverse the tilt to drain the
-  sand back the other way.
+  opposite gravity (grains fall across the strip) and the low side
+  **accumulates one pixel at a time**. Piles stay contiguous (no gaps).
+  **Effect speed** sets the base drip pause (default ~50% faster), and
+  **Flow** (Custom 1) shortens it so several grains are in flight at once —
+  the more you raise Flow, the more the sand looks like it's pouring. Level
+  the device to stop the flow; reverse the tilt to drain the sand back.
 * **2D matrices**: a falling-sand grid; when it fills up it flips and falls
   the other way instead of disappearing.
 
@@ -98,8 +99,9 @@ Select it as the effect for your segment, then use its sliders:
 
 | Slider | Effect |
 |--------|--------|
-| Effect speed   | Pause between grains (1D) / pour rate (2D). Higher = faster |
+| Effect speed   | Base pause between grains (1D) / pour rate (2D). Higher = faster |
 | Effect intensity | Sand amount |
+| Custom 1 (Flow) | Shortens the drip pause so more grains are in flight at once (1D) / simulation steps (2D) |
 
 The `tiltAxis` usermod setting selects which tilt direction drives the sand:
 
