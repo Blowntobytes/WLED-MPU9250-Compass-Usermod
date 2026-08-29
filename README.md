@@ -81,10 +81,12 @@ The usermod registers a custom effect called **"Falling Sand"** in the
 WLED effect list. It is modelled on WLED's built-in **PS Hourglass** but
 driven by the sensor's tilt:
 
-* **1D strips**: the sand is **one contiguous bag** (no gaps) that slides
-  toward the low end **one pixel at a time** as you tilt — the bag edges move
-  a single pixel per step (~90 ms), so the motion is smooth and granular. It
-  never vanishes and never flickers.
+* **1D strips**: the lit sand pile **sheds one pixel at a time** from the side
+  opposite gravity (the grain falls across the strip) and the low side
+  **accumulates one pixel at a time**. Piles stay contiguous (no gaps) and
+  exactly one grain is ever in flight; **effect speed** sets the pause between
+  grains. Level the device to stop the flow; reverse the tilt to drain the
+  sand back the other way.
 * **2D matrices**: a falling-sand grid; when it fills up it flips and falls
   the other way instead of disappearing.
 
@@ -96,9 +98,8 @@ Select it as the effect for your segment, then use its sliders:
 
 | Slider | Effect |
 |--------|--------|
-| Effect speed   | Slide speed / pour rate — pause between sand steps (1D) or pour rate (2D). Higher = faster |
+| Effect speed   | Pause between grains (1D) / pour rate (2D). Higher = faster |
 | Effect intensity | Sand amount |
-| Custom 1       | Flow — pixels per step (1D, default 1 = one pixel at a time) / simulation steps per frame (2D) |
 
 The `tiltAxis` usermod setting selects which tilt direction drives the sand:
 

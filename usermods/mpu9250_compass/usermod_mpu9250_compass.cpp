@@ -360,27 +360,33 @@ static Mpu9250Compass mpu9250_compass;
 
 /*
  * Custom WLED effect: "Falling Sand".
- *   - 1D strips: a single contiguous bag of sand (no gaps) that slides toward
- *     the low end one pixel at a time (~90 ms per step), driven by tilt. It
- *     never vanishes and never flickers.
+ *   - 1D strips: the lit sand pile sheds one pixel at a time from the side
+ *     opposite gravity (the grain falls across the strip) and the low side
+ *     accumulates one pixel at a time. Piles stay contiguous (no gaps); one
+ *     grain is ever in flight; the speed slider sets the pause between
+ *     grains. Level the device to stop, reverse the tilt to drain it back.
  *   - 2D matrices: a falling-sand grid; when it fills up it flips (falls the
  *     other way) instead of vanishing.
  * The tilt axis is selectable via the usermod `tiltAxis` setting:
  *   0 = both axes, 1 = left/right only, 2 = forward/back only.
  * Parameters (segment sliders):
- *   speed     = slide speed (1D) / pour rate (2D)
+ *   speed     = pause between grains (1D) / pour rate (2D)
  *   intensity = sand amount
- *   custom1   = flow speed (2D only: simulation steps per frame)
  */
 struct FallingSandData {
   uint16_t w = 0;
   uint16_t h = 0;
   uint32_t lastNow = 0;
   uint8_t  lastAxis = 0xFF;
-  // 1D bag state
-  int16_t  bagStart = 0;   // start index of the sliding sand bag
-  int8_t   lastDir = 0;    // hysteresis (which way gravity points)
+  // 1D drip state
+  uint16_t N = 0;          // number of sand grains
+  uint16_t pile0 = 0;      // sand piled at the low-index end
+  uint16_t pileW = 0;      // sand piled at the high-index end
+  int16_t  drip = -1;      // falling grain position, -1 = none
+  int8_t   dir = 0;        // current flow direction (-1/0/+1)
+  uint32_t lastDrop = 0;   // when the last grain was released
   uint32_t lastFallMove = 0;
+  int16_t  paused = 0;     // settle pause after a direction change
   // 2D grid state
   uint32_t sandCount = 0;
   float    spawnAcc = 0.0f;
@@ -390,7 +396,7 @@ struct FallingSandData {
 };
 
 static const char _data_FX_MODE_FALLING_SAND[] PROGMEM =
-  "Falling Sand@!,Sand amount,Flow;!,!;!;12;sx=128,ix=128,c1=0";
+  "Falling Sand@!,Sand amount;!,!;!;12;sx=128,ix=128";
 
 static void mode_falling_sand() {
   const uint16_t W = SEGMENT.virtualWidth();
@@ -406,7 +412,8 @@ static void mode_falling_sand() {
     memset(sand, 0, cells);
     d->w = W; d->h = H;
     d->sandCount = 0;
-    d->bagStart = 0; d->lastDir = 0; d->lastFallMove = 0;
+    d->N = 0; d->pile0 = 0; d->pileW = 0; d->drip = -1; d->dir = 0;
+    d->lastDrop = 0; d->lastFallMove = 0; d->paused = 0;
     d->lastSx = 0; d->lastSy = 0;
   }
 
@@ -420,39 +427,72 @@ static void mode_falling_sand() {
   float gy = mpu9250_compass.tiltGY();
   uint8_t axis = mpu9250_compass.tiltAxisSel();
   if (axis > 2) axis = 0;
-  if (d->lastAxis != axis) { d->lastAxis = axis; d->lastDir = 0; }
+  if (d->lastAxis != axis) { d->lastAxis = axis; d->dir = 0; }
 
   if (H == 1) {
-    // ---------------- 1D: one bag of sand, no gaps, slides one pixel at a time ----------------
-    // A single contiguous block of sand (no internal gaps) slides toward the
-    // low end under tilt, one pixel per step (~90 ms). It never vanishes and
-    // never flickers - only the bag edges move, one pixel at a time.
+    // ---------------- 1D: sand sheds one pixel at a time, accumulates on the other side ----------------
+    // The lit sand pile loses one pixel at a time from the side opposite
+    // gravity (the grain falls across the strip) and the low side accumulates
+    // one pixel at a time. Both piles stay contiguous (no gaps). One grain is
+    // ever in flight; the speed slider sets the pause between grains. Level
+    // the device to stop; reverse the tilt to drain the sand back.
     uint16_t N = 2 + (SEGMENT.intensity * (W > 2 ? W - 2 : 1)) / 255;
     if (N > W) N = W;
     if (N < 1) N = 1;
 
-    // desired direction from the selected tilt axis (hysteresis)
-    float tilt = (axis == 2) ? gy : gx;
-    int8_t want = (tilt > 0.2f) ? 1 : (tilt < -0.2f ? -1 : 0);
-    if (want != 0) d->lastDir = want;
-    int8_t dir = d->lastDir;
-
-    // slide the bag; speed sets the pause between steps, flow sets the step size
-    uint32_t interval = 40 + (255 - SEGMENT.speed) * 4; // ~40ms..1.06s
-    int16_t  step     = 1 + (SEGMENT.custom1 >> 5);     // 1..8 pixels per step
-    if ((now - d->lastFallMove) >= interval) {
-      d->lastFallMove = now;
-      if (dir > 0) d->bagStart += step;
-      else if (dir < 0) d->bagStart -= step;
-      if (d->bagStart < 0) d->bagStart = 0;
-      if (d->bagStart > (int16_t)(W - N)) d->bagStart = (int16_t)(W - N);
+    // (re)initialise the pile when the sand amount changed
+    if (d->N != N) {
+      d->N = N;
+      d->pile0 = N; d->pileW = 0;
+      d->drip = -1; d->paused = 0;
     }
 
-    // render: one contiguous bag, coloured from the palette
+    // flow direction from the selected tilt axis (dead zone; stops when level)
+    float tilt = (axis == 2) ? gy : gx;
+    int8_t dir = (tilt > 0.2f) ? 1 : (tilt < -0.2f ? -1 : 0);
+
+    // on a direction change, return any in-flight grain to its pile
+    if (dir != d->dir) {
+      if (d->drip >= 0) {
+        if (d->dir > 0) d->pile0++;
+        else if (d->dir < 0) d->pileW++;
+        d->drip = -1;
+      }
+      d->dir = dir;
+      d->paused = 4;
+    }
+    if (d->paused > 0) d->paused--;
+
+    // release one grain at a time from the source pile (opposite gravity)
+    uint32_t interval = 40 + (255 - SEGMENT.speed) * 4; // ~40ms..1.06s
+    bool srcAt0 = (d->dir > 0); // dir=+1: source is the low-index pile
+    uint16_t src = srcAt0 ? d->pile0 : d->pileW;
+    if (d->paused == 0 && d->dir != 0 && d->drip < 0 && src > 0 && (now - d->lastDrop) >= interval) {
+      d->lastDrop = now;
+      d->lastFallMove = now;
+      if (srcAt0) { d->pile0--; d->drip = (int16_t)d->pile0; }
+      else        { d->pileW--; d->drip = (int16_t)(W - 1 - d->pileW); }
+    }
+
+    // the single falling grain moves one cell per ~60 ms across the strip
+    if (d->drip >= 0 && (now - d->lastFallMove) >= 60) {
+      d->lastFallMove = now;
+      d->drip += d->dir;
+      int16_t limit = (d->dir > 0) ? (int16_t)(W - 1 - d->pileW) : (int16_t)d->pile0;
+      if ((d->dir > 0 && d->drip >= limit) || (d->dir < 0 && d->drip <= limit)) {
+        if (d->dir > 0) d->pileW++; else d->pile0++;
+        d->drip = -1;
+      }
+    }
+
+    // render: source pile + low pile + the single falling grain
     SEGMENT.fill(SEGCOLOR(1));
     for (uint16_t i = 0; i < W; i++) {
-      if (i >= (uint16_t)d->bagStart && i < (uint16_t)d->bagStart + N)
-        SEGMENT.setPixelColor(i, ColorFromPalette(SEGPALETTE, (uint8_t)((i * 256u) / W), 255, LINEARBLEND));
+      bool lit = false;
+      if (i < d->pile0) lit = true;                 // low-index pile
+      if (i >= W - d->pileW) lit = true;            // high-index pile
+      if (d->drip == (int16_t)i) lit = true;        // falling grain
+      if (lit) SEGMENT.setPixelColor(i, ColorFromPalette(SEGPALETTE, (uint8_t)((i * 256u) / W), 255, LINEARBLEND));
     }
     return;
   }
