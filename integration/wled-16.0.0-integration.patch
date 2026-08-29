@@ -64,10 +64,10 @@ index 0000000..2bafdd5
 \ No newline at end of file
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
 new file mode 100644
-index 0000000..7f5770c
+index 0000000..276dd25
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
-@@ -0,0 +1,1148 @@
+@@ -0,0 +1,1149 @@
 +/*
 + * WLED usermod: MPU-9250 compass LED display (implementation)
 + * See usermod_mpu9250_compass.h for details.
@@ -548,7 +548,8 @@ index 0000000..7f5770c
 +    uint16_t src = srcAt0 ? d->pile0 : d->pileW;
 +    if (d->paused == 0 && d->dir != 0 && src > 0 && d->dripsCount < (uint8_t)W && (now - d->lastDrop) >= interval) {
 +      d->lastDrop = now;
-+      d->lastFallMove = now;
++      // note: the fall timer is intentionally NOT reset here, so grains keep a
++      // steady speed regardless of how often new ones are released
 +      if (srcAt0) { d->pile0--; drips[d->dripsCount++] = (int16_t)d->pile0; }
 +      else        { d->pileW--; drips[d->dripsCount++] = (int16_t)(W - 1 - d->pileW); }
 +    }

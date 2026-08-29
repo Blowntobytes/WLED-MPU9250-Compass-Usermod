@@ -478,7 +478,8 @@ static void mode_falling_sand() {
     uint16_t src = srcAt0 ? d->pile0 : d->pileW;
     if (d->paused == 0 && d->dir != 0 && src > 0 && d->dripsCount < (uint8_t)W && (now - d->lastDrop) >= interval) {
       d->lastDrop = now;
-      d->lastFallMove = now;
+      // note: the fall timer is intentionally NOT reset here, so grains keep a
+      // steady speed regardless of how often new ones are released
       if (srcAt0) { d->pile0--; drips[d->dripsCount++] = (int16_t)d->pile0; }
       else        { d->pileW--; drips[d->dripsCount++] = (int16_t)(W - 1 - d->pileW); }
     }
