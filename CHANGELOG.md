@@ -10,6 +10,16 @@ Versioning scheme:
 * **MINOR** (v1.1.0, v1.2.0, ...) — new features, backwards compatible.
 * **PATCH** (v1.1.1, v1.1.2, ...) — bug fixes.
 
+## [1.5.0] - 2026-08-28
+
+### Added
+- **Sensor-driven PS 1D Balance**: the built-in WLED particle effect's virtual
+  gravity is replaced with real accelerometer tilt (pulls particles toward the
+  low side). Reads tilt via the usermod data exchange and honours `tiltAxis`;
+  falls back to the original virtual force when the usermod isn't built in.
+- Two small core edits to support this: `wled00/FX.cpp` (sensor force in
+  `mode_particleBalance`) and `wled00/const.h` (new usermod ID).
+
 ## [1.4.0] - 2026-08-28
 
 ### Added
