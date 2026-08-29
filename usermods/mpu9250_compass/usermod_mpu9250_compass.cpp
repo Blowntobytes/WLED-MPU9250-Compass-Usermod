@@ -360,16 +360,15 @@ static Mpu9250Compass mpu9250_compass;
 
 /*
  * Custom WLED effect: "Falling Sand".
- *   - 1D strips: a single contiguous bag of sand (no gaps) whose grains
- *     cascade one pixel at a time - one grain steps forward, a pause (set by
- *     effect speed), then the next grain steps - so the bag slides down the
- *     strip one pixel at a time, driven by tilt. Never vanishes or flickers.
+ *   - 1D strips: a single contiguous bag of sand (no gaps) that slides toward
+ *     the low end one pixel at a time (~90 ms per step), driven by tilt. It
+ *     never vanishes and never flickers.
  *   - 2D matrices: a falling-sand grid; when it fills up it flips (falls the
  *     other way) instead of vanishing.
  * The tilt axis is selectable via the usermod `tiltAxis` setting:
  *   0 = both axes, 1 = left/right only, 2 = forward/back only.
  * Parameters (segment sliders):
- *   speed     = pause between grains (1D) / pour rate (2D)
+ *   speed     = slide speed (1D) / pour rate (2D)
  *   intensity = sand amount
  *   custom1   = flow speed (2D only: simulation steps per frame)
  */
@@ -379,8 +378,7 @@ struct FallingSandData {
   uint32_t lastNow = 0;
   uint8_t  lastAxis = 0xFF;
   // 1D bag state
-  uint16_t N = 0;          // number of sand grains in the bag
-  uint16_t cascadeStep = 0;// which grain moves next (one at a time)
+  int16_t  bagStart = 0;   // start index of the sliding sand bag
   int8_t   lastDir = 0;    // hysteresis (which way gravity points)
   uint32_t lastFallMove = 0;
   // 2D grid state
@@ -399,19 +397,16 @@ static void mode_falling_sand() {
   const uint16_t H = SEGMENT.virtualHeight();
   const size_t cells = (size_t)W * H;
   if (cells == 0) return;
-  // 1D needs an int16 array for grain positions; 2D needs a byte grid
-  size_t need = (H == 1) ? (sizeof(FallingSandData) + (size_t)W * sizeof(int16_t))
-                         : (sizeof(FallingSandData) + cells);
-  if (!SEGENV.allocateData(need)) return;
+  if (!SEGENV.allocateData(sizeof(FallingSandData) + cells)) return;
 
-  FallingSandData *d    = reinterpret_cast<FallingSandData*>(SEGENV.data);
-  uint8_t         *tail = SEGENV.data + sizeof(FallingSandData);
+  FallingSandData *d   = reinterpret_cast<FallingSandData*>(SEGENV.data);
+  uint8_t         *sand = SEGENV.data + sizeof(FallingSandData);
 
   if (d->w != W || d->h != H) {
-    memset(tail, 0, (H == 1) ? (size_t)W * sizeof(int16_t) : cells);
+    memset(sand, 0, cells);
     d->w = W; d->h = H;
     d->sandCount = 0;
-    d->N = 0; d->cascadeStep = 0; d->lastDir = 0; d->lastFallMove = 0;
+    d->bagStart = 0; d->lastDir = 0; d->lastFallMove = 0;
     d->lastSx = 0; d->lastSy = 0;
   }
 
@@ -428,22 +423,13 @@ static void mode_falling_sand() {
   if (d->lastAxis != axis) { d->lastAxis = axis; d->lastDir = 0; }
 
   if (H == 1) {
-    // ---------------- 1D: bag of sand, ONE pixel moves at a time ----------------
-    // Grains cascade: one grain steps forward, a pause (effect speed), then the
-    // next grain steps, and so on - so the bag slides down the strip one pixel
-    // at a time instead of all together. No gaps between the grains.
+    // ---------------- 1D: one bag of sand, no gaps, slides one pixel at a time ----------------
+    // A single contiguous block of sand (no internal gaps) slides toward the
+    // low end under tilt, one pixel per step (~90 ms). It never vanishes and
+    // never flickers - only the bag edges move, one pixel at a time.
     uint16_t N = 2 + (SEGMENT.intensity * (W > 2 ? W - 2 : 1)) / 255;
     if (N > W) N = W;
     if (N < 1) N = 1;
-
-    int16_t *grain = reinterpret_cast<int16_t*>(tail); // W slots, positions per grain
-
-    // (re)place the bag when the size changed
-    if (d->N != N) {
-      d->N = N;
-      d->cascadeStep = 0;
-      for (uint16_t j = 0; j < N; j++) grain[j] = (int16_t)j; // bag sits at one end
-    }
 
     // desired direction from the selected tilt axis (hysteresis)
     float tilt = (axis == 2) ? gy : gx;
@@ -451,32 +437,25 @@ static void mode_falling_sand() {
     if (want != 0) d->lastDir = want;
     int8_t dir = d->lastDir;
 
-    // move ONE grain one step per tick; the pause is set by the speed slider
-    uint32_t tickInterval = 30 + (255 - SEGMENT.speed) * 3; // ~30ms..795ms
-    if (dir != 0 && (now - d->lastFallMove) >= tickInterval) {
+    // slide the bag one pixel per ~90 ms toward the low wall
+    if ((now - d->lastFallMove) >= 90) {
       d->lastFallMove = now;
-      if ((dir > 0 && grain[N-1] >= (int16_t)(W - 1)) || (dir < 0 && grain[0] <= 0)) {
-        d->cascadeStep = 0; // bag rests at the wall
-      } else {
-        uint16_t idx = (dir > 0) ? (uint16_t)(N - 1 - d->cascadeStep) : d->cascadeStep;
-        if (idx < N) {
-          grain[idx] += dir;
-          d->cascadeStep++;
-          if (d->cascadeStep >= N) d->cascadeStep = 0;
-        }
-      }
+      if (dir > 0) d->bagStart += 1;
+      else if (dir < 0) d->bagStart -= 1;
+      if (d->bagStart < 0) d->bagStart = 0;
+      if (d->bagStart > (int16_t)(W - N)) d->bagStart = (int16_t)(W - N);
     }
 
-    // render the bag (contiguous; one gap briefly travels through it while cascading)
+    // render: one contiguous bag, coloured from the palette
     SEGMENT.fill(SEGCOLOR(1));
-    for (uint16_t j = 0; j < N; j++)
-      if (grain[j] >= 0 && grain[j] < (int16_t)W)
-        SEGMENT.setPixelColor((uint16_t)grain[j], ColorFromPalette(SEGPALETTE, (uint8_t)((grain[j] * 256u) / W), 255, LINEARBLEND));
+    for (uint16_t i = 0; i < W; i++) {
+      if (i >= (uint16_t)d->bagStart && i < (uint16_t)d->bagStart + N)
+        SEGMENT.setPixelColor(i, ColorFromPalette(SEGPALETTE, (uint8_t)((i * 256u) / W), 255, LINEARBLEND));
+    }
     return;
   }
 
   // ---------------- 2D: falling sand that flips on full ----------------
-  uint8_t *sand = tail;
 
   // ---------------- 2D: falling sand that flips on full ----------------
   int8_t sx, sy;
