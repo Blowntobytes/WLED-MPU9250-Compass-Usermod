@@ -12,11 +12,11 @@ color/effect, so you can see at a glance which way is North.
    ┌───────────────────────────────┐
    │        compass ring           │
    │    .  .  .  N  .  .  .        │   N  = north-sector LEDs (northColor)
-   │   .            .   .          │   .  = remaining LEDs   (otherColor)
-   │   .     MPU-9250    .         │
-   │   .    (I2C)        .         │
-   │    .            .  .          │
-   │     .  .  .  .  .  .          │
+   │    .                 .        │   .  = remaining LEDs   (otherColor)
+   │    .    MPU-9250     .        │
+   │    .   (I2C)         .        │
+   │    .                 .        │
+   │    .  .  .  .  .  .  .        │
    └───────────────────────────────┘
 ```
 
