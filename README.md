@@ -96,9 +96,9 @@ Select it as the effect for your segment, then use its sliders:
 
 | Slider | Effect |
 |--------|--------|
-| Effect speed   | Drip interval (higher = faster) |
+| Effect speed   | Slide speed / pour rate — pause between sand steps (1D) or pour rate (2D). Higher = faster |
 | Effect intensity | Sand amount |
-| Custom 1       | Flow speed (2D only: simulation steps per frame) |
+| Custom 1       | Flow — pixels per step (1D, default 1 = one pixel at a time) / simulation steps per frame (2D) |
 
 The `tiltAxis` usermod setting selects which tilt direction drives the sand:
 

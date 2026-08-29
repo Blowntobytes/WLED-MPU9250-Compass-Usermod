@@ -390,7 +390,7 @@ struct FallingSandData {
 };
 
 static const char _data_FX_MODE_FALLING_SAND[] PROGMEM =
-  "Falling Sand@!,Sand amount,Flow;!,!;!;12;sx=128,ix=128,c1=64";
+  "Falling Sand@!,Sand amount,Flow;!,!;!;12;sx=128,ix=128,c1=0";
 
 static void mode_falling_sand() {
   const uint16_t W = SEGMENT.virtualWidth();
@@ -437,11 +437,13 @@ static void mode_falling_sand() {
     if (want != 0) d->lastDir = want;
     int8_t dir = d->lastDir;
 
-    // slide the bag one pixel per ~90 ms toward the low wall
-    if ((now - d->lastFallMove) >= 90) {
+    // slide the bag; speed sets the pause between steps, flow sets the step size
+    uint32_t interval = 40 + (255 - SEGMENT.speed) * 4; // ~40ms..1.06s
+    int16_t  step     = 1 + (SEGMENT.custom1 >> 5);     // 1..8 pixels per step
+    if ((now - d->lastFallMove) >= interval) {
       d->lastFallMove = now;
-      if (dir > 0) d->bagStart += 1;
-      else if (dir < 0) d->bagStart -= 1;
+      if (dir > 0) d->bagStart += step;
+      else if (dir < 0) d->bagStart -= step;
       if (d->bagStart < 0) d->bagStart = 0;
       if (d->bagStart > (int16_t)(W - N)) d->bagStart = (int16_t)(W - N);
     }
