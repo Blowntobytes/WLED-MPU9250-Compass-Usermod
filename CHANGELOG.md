@@ -10,6 +10,18 @@ Versioning scheme:
 * **MINOR** (v1.1.0, v1.2.0, ...) — new features, backwards compatible.
 * **PATCH** (v1.1.1, v1.1.2, ...) — bug fixes.
 
+## [1.3.0] - 2026-08-28
+
+### Changed
+- **Falling Sand** (1D) reworked to the confirmed-good behaviour: the lit sand
+  pile sheds one pixel at a time from the side opposite gravity, the grain
+  falls across the strip, and the low side accumulates one pixel at a time.
+  Piles stay contiguous (no gaps).
+- Default drip speed is now ~50% faster.
+- New **Flow** slider (Custom 1) shortens the drip pause so several grains are
+  in flight at once, making the sand pour like a stream.
+- Level the device to stop the flow; reverse the tilt to drain the sand back.
+
 ## [1.2.0] - 2026-08-28
 
 ### Added
