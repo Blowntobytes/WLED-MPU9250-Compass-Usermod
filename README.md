@@ -143,6 +143,11 @@ Colours come from the usual colour picker screen: the **Fx** slot colours the
 bubble and the **Bg** slot colours the rest of the strip. On a 2D matrix the
 bubble is a vertical bar.
 
+The bubble uses **continuous, un-normalised tilt** (no dead zone), so it
+responds proportionally to even the smallest tilt — the closer to level, the
+closer to centre — for maximum accuracy. (Resolution is limited by the number
+of LEDs: on a 16-LED strip each LED is roughly 6% of the travel.)
+
 ## Hardware & wiring
 
 | MPU-9250 (GY-9250 / GY-91) | GY-271 (HMC5883L / QMC5883L) | ESP32   | ESP8266  |

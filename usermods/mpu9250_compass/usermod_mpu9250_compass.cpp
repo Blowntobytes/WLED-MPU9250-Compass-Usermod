@@ -613,11 +613,11 @@ static void mode_bubble_level() {
   float *cx = reinterpret_cast<float*>(SEGENV.data);
   if (SEGENV.call == 0) *cx = (float)W * 0.5f;
 
-  float gx = mpu9250_compass.tiltGX();
-  float gy = mpu9250_compass.tiltGY();
+  float gx = mpu9250_compass.tiltRawX(); // continuous raw gravity, no dead zone
+  float gy = mpu9250_compass.tiltRawY();
   uint8_t axis = mpu9250_compass.tiltAxisSel();
   if (axis > 2) axis = 0;
-  float tilt = (axis == 2) ? gy : gx; // which tilt drives the bubble
+  float tilt = (axis == 2) ? gy : gx; // which tilt drives the bubble (in g, -1..1)
 
   uint16_t size = 1 + (SEGMENT.intensity * (W - 1)) / 255; // bubble size (LEDs)
   if (size > W) size = W;
@@ -773,6 +773,10 @@ void Mpu9250Compass::updateHeading() {
     float ax = (float)acc[0] * ACCEL_SCALE;
     float ay = (float)acc[1] * ACCEL_SCALE;
     float az = (float)acc[2] * ACCEL_SCALE;
+    // continuous raw gravity on the display plane (in g) - no dead zone,
+    // lightly smoothed; drives the bubble level with maximum accuracy
+    _rawGX = _rawGX * 0.6f + (-ax) * 0.4f;
+    _rawGY = _rawGY * 0.6f + (-ay) * 0.4f;
     float gx = -ax, gy = -ay;
     float m = sqrtf(gx * gx + gy * gy);
     float ngx, ngy;

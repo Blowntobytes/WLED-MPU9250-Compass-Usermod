@@ -75,6 +75,7 @@ class Mpu9250Compass : public Usermod {
     bool     _magOK          = false;   // magnetometer usable (compass)
     float    _gx = 0.0f, _gy = 1.0f;    // gravity direction on the screen plane (for tilt effects)
     float    _effTilt = 0.0f;            // axis-selected 1D tilt (-1..1) shared with WLED effects
+    float    _rawGX = 0.0f, _rawGY = 0.0f; // continuous raw gravity on X/Y (in g), no dead zone - bubble level
     uint8_t  _initAddr       = 0;
     int      _initSda        = -1;
     int      _initScl        = -1;
@@ -134,4 +135,7 @@ class Mpu9250Compass : public Usermod {
     inline float tiltGY() const { return _gy; }
     inline bool  tiltAvailable() const { return _accelOK; }
     inline uint8_t tiltAxisSel() const { return tiltAxis; }
+    // continuous raw gravity (in g, no dead zone) for the bubble level
+    inline float tiltRawX() const { return _rawGX; }
+    inline float tiltRawY() const { return _rawGY; }
 };

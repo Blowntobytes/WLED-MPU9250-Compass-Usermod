@@ -64,10 +64,10 @@ index 0000000..2bafdd5
 \ No newline at end of file
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
 new file mode 100644
-index 0000000..71263ed
+index 0000000..7f5770c
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
-@@ -0,0 +1,1144 @@
+@@ -0,0 +1,1148 @@
 +/*
 + * WLED usermod: MPU-9250 compass LED display (implementation)
 + * See usermod_mpu9250_compass.h for details.
@@ -683,11 +683,11 @@ index 0000000..71263ed
 +  float *cx = reinterpret_cast<float*>(SEGENV.data);
 +  if (SEGENV.call == 0) *cx = (float)W * 0.5f;
 +
-+  float gx = mpu9250_compass.tiltGX();
-+  float gy = mpu9250_compass.tiltGY();
++  float gx = mpu9250_compass.tiltRawX(); // continuous raw gravity, no dead zone
++  float gy = mpu9250_compass.tiltRawY();
 +  uint8_t axis = mpu9250_compass.tiltAxisSel();
 +  if (axis > 2) axis = 0;
-+  float tilt = (axis == 2) ? gy : gx; // which tilt drives the bubble
++  float tilt = (axis == 2) ? gy : gx; // which tilt drives the bubble (in g, -1..1)
 +
 +  uint16_t size = 1 + (SEGMENT.intensity * (W - 1)) / 255; // bubble size (LEDs)
 +  if (size > W) size = W;
@@ -843,6 +843,10 @@ index 0000000..71263ed
 +    float ax = (float)acc[0] * ACCEL_SCALE;
 +    float ay = (float)acc[1] * ACCEL_SCALE;
 +    float az = (float)acc[2] * ACCEL_SCALE;
++    // continuous raw gravity on the display plane (in g) - no dead zone,
++    // lightly smoothed; drives the bubble level with maximum accuracy
++    _rawGX = _rawGX * 0.6f + (-ax) * 0.4f;
++    _rawGY = _rawGY * 0.6f + (-ay) * 0.4f;
 +    float gx = -ax, gy = -ay;
 +    float m = sqrtf(gx * gx + gy * gy);
 +    float ngx, ngy;
@@ -1214,10 +1218,10 @@ index 0000000..71263ed
 +REGISTER_USERMOD(mpu9250_compass);
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.h b/usermods/mpu9250_compass/usermod_mpu9250_compass.h
 new file mode 100644
-index 0000000..5c251ca
+index 0000000..bec3436
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.h
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,141 @@
 +#pragma once
 +
 +/*
@@ -1295,6 +1299,7 @@ index 0000000..5c251ca
 +    bool     _magOK          = false;   // magnetometer usable (compass)
 +    float    _gx = 0.0f, _gy = 1.0f;    // gravity direction on the screen plane (for tilt effects)
 +    float    _effTilt = 0.0f;            // axis-selected 1D tilt (-1..1) shared with WLED effects
++    float    _rawGX = 0.0f, _rawGY = 0.0f; // continuous raw gravity on X/Y (in g), no dead zone - bubble level
 +    uint8_t  _initAddr       = 0;
 +    int      _initSda        = -1;
 +    int      _initScl        = -1;
@@ -1354,6 +1359,9 @@ index 0000000..5c251ca
 +    inline float tiltGY() const { return _gy; }
 +    inline bool  tiltAvailable() const { return _accelOK; }
 +    inline uint8_t tiltAxisSel() const { return tiltAxis; }
++    // continuous raw gravity (in g, no dead zone) for the bubble level
++    inline float tiltRawX() const { return _rawGX; }
++    inline float tiltRawY() const { return _rawGY; }
 +};
 diff --git a/wled00/FX.cpp b/wled00/FX.cpp
 index bd42d1a..a303afb 100644
