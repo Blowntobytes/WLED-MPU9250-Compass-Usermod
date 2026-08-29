@@ -135,13 +135,10 @@ Select it as the effect for your segment and use its sliders:
 |--------|--------|
 | Effect speed   | Responsiveness — how fast the bubble tracks the tilt |
 | Effect intensity | Bubble size (number of LEDs) |
-| Custom 1       | Bubble colour: palette index used for the bubble |
-| Custom 2       | Background colour: palette index used for the rest of the strip |
 
-The bubble and background are coloured from the segment's **palette** (pick
-any WLED palette in the segment's palette dropdown, then choose a colour
-position for each area with the two sliders). On a 2D matrix the bubble is a
-vertical bar.
+Colours come from the usual colour picker screen: the **Fx** slot colours the
+bubble and the **Bg** slot colours the rest of the strip. On a 2D matrix the
+bubble is a vertical bar.
 
 ## Hardware & wiring
 

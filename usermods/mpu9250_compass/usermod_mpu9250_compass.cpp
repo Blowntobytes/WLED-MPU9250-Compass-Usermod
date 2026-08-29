@@ -594,17 +594,16 @@ static void mode_falling_sand() {
 /*
  * Custom WLED effect: "Bubble Level".
  * A spirit level on the strip: a bubble (configurable size) floats opposite
- * gravity and sits centred when the device is level. The bubble and the
- * background are coloured from the segment palette using two selectable
- * palette indices, so any WLED palette can be used.
+ * gravity and sits centred when the device is level. The bubble uses the
+ * segment's Fx colour slot and the background uses the Bg colour slot, picked
+ * from the usual colour picker screen.
  * Parameters (segment sliders):
  *   speed     = responsiveness (how fast the bubble tracks tilt)
  *   intensity = bubble size (number of LEDs)
- *   custom1   = bubble palette index
- *   custom2   = background palette index
+ *   Fx colour = bubble, Bg colour = background
  */
 static const char _data_FX_MODE_BUBBLE_LEVEL[] PROGMEM =
-  "Bubble Level@Smooth,Bubble size,Bubble color,Bg color;!,!;!;12;sx=128,ix=64,c1=0,c2=160";
+  "Bubble Level@Smooth,Bubble size;!,!;!;12;sx=128,ix=64";
 
 static void mode_bubble_level() {
   const uint16_t W = SEGMENT.virtualWidth();
@@ -637,8 +636,8 @@ static void mode_bubble_level() {
   int16_t c0 = (int16_t)(*cx) - half;
   int16_t c1 = c0 + (int16_t)size - 1;
 
-  uint32_t bubbleCol = ColorFromPalette(SEGPALETTE, SEGMENT.custom1, 255, LINEARBLEND);
-  uint32_t bgCol     = ColorFromPalette(SEGPALETTE, SEGMENT.custom2, 255, LINEARBLEND);
+  uint32_t bubbleCol = SEGCOLOR(0); // Fx colour slot = the bubble
+  uint32_t bgCol     = SEGCOLOR(1); // Bg colour slot = the background
 
   SEGMENT.fill(bgCol);
   if (H == 1) {
