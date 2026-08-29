@@ -10,6 +10,15 @@ Versioning scheme:
 * **MINOR** (v1.1.0, v1.2.0, ...) — new features, backwards compatible.
 * **PATCH** (v1.1.1, v1.1.2, ...) — bug fixes.
 
+## [1.4.0] - 2026-08-28
+
+### Added
+- New tilt-driven **"Bubble Level"** effect: a spirit level on the strip. A
+  configurable-size bubble floats opposite gravity and sits centred when the
+  device is level. Bubble colour uses the segment's **Fx** slot and the
+  background uses the **Bg** slot (picked from the colour picker screen).
+  - Effect speed = responsiveness, Effect intensity = bubble size.
+
 ## [1.3.0] - 2026-08-28
 
 ### Changed
