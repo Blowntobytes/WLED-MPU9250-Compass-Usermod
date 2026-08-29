@@ -458,15 +458,18 @@ static void mode_falling_sand() {
     float tilt = (axis == 2) ? gy : gx;
     int8_t dir = (tilt > 0.2f) ? 1 : (tilt < -0.2f ? -1 : 0);
 
-    // on a direction change, return all in-flight grains to their pile
+    // on a full direction reversal return the in-flight grains to their pile;
+    // when the device is levelled (dir -> 0) or flow starts, grains stay put
     if (dir != d->dir) {
-      if (d->dripsCount > 0) {
-        if (d->dir > 0) d->pile0 += d->dripsCount;
-        else if (d->dir < 0) d->pileW += d->dripsCount;
-        d->dripsCount = 0;
+      if (dir != 0 && d->dir != 0) {
+        if (d->dripsCount > 0) {
+          if (d->dir > 0) d->pile0 += d->dripsCount;
+          else if (d->dir < 0) d->pileW += d->dripsCount;
+          d->dripsCount = 0;
+        }
+        d->paused = 4;
       }
       d->dir = dir;
-      d->paused = 4;
     }
     if (d->paused > 0) d->paused--;
 

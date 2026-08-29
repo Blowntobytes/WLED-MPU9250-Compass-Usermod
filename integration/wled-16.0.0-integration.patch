@@ -64,10 +64,10 @@ index 0000000..2bafdd5
 \ No newline at end of file
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
 new file mode 100644
-index 0000000..e8caecc
+index 0000000..fc1f144
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
-@@ -0,0 +1,1161 @@
+@@ -0,0 +1,1164 @@
 +/*
 + * WLED usermod: MPU-9250 compass LED display (implementation)
 + * See usermod_mpu9250_compass.h for details.
@@ -528,15 +528,18 @@ index 0000000..e8caecc
 +    float tilt = (axis == 2) ? gy : gx;
 +    int8_t dir = (tilt > 0.2f) ? 1 : (tilt < -0.2f ? -1 : 0);
 +
-+    // on a direction change, return all in-flight grains to their pile
++    // on a full direction reversal return the in-flight grains to their pile;
++    // when the device is levelled (dir -> 0) or flow starts, grains stay put
 +    if (dir != d->dir) {
-+      if (d->dripsCount > 0) {
-+        if (d->dir > 0) d->pile0 += d->dripsCount;
-+        else if (d->dir < 0) d->pileW += d->dripsCount;
-+        d->dripsCount = 0;
++      if (dir != 0 && d->dir != 0) {
++        if (d->dripsCount > 0) {
++          if (d->dir > 0) d->pile0 += d->dripsCount;
++          else if (d->dir < 0) d->pileW += d->dripsCount;
++          d->dripsCount = 0;
++        }
++        d->paused = 4;
 +      }
 +      d->dir = dir;
-+      d->paused = 4;
 +    }
 +    if (d->paused > 0) d->paused--;
 +
