@@ -164,8 +164,13 @@ of LEDs: on a 16-LED strip each LED is roughly 6% of the travel.)
   breakout boards already include them.
 * SDA/SCL pins are configurable in the usermod settings. For the MPU-9250 the
   I2C address (`0x68` / `0x69`) is configurable too; the GY-271 is
-  auto-detected at `0x1E` (HMC5883L) or `0x0D` (QMC5883L).
+  auto-detected at `0x1E` (HMC5883L), `0x0D` (QMC5883L) or `0x2C`
+  (QMC5883P / "HP5883" — the newest GY-271 chip).
 * The ring's first `totalLeds` LEDs (starting at LED 0) form the compass.
+
+> **DRDY pin**: the GY-271's DRDY (data-ready) pin is an optional interrupt
+> and is **not required** — this usermod reads the sensor directly over I2C.
+> Leave it unconnected (just wire VCC, GND, SDA, SCL).
 
 ## Integration with WLED 16.0.0
 
@@ -358,7 +363,7 @@ The usermod exposes its live state under `MPU9250Compass` in `/json/state`:
 | `sensorKind` | Active sensor: `1` = MPU-9250, `2` = GY-271, `0` = none. |
 | `accelAvailable` | Accelerometer usable (drives the Falling Sand tilt effect). |
 | `magAvailable` | Magnetometer usable (drives the compass). |
-| `magType` | Magnetometer found: `1` = AK8963 (MPU-9250), `2` = HMC5883L, `3` = QMC5883L, `0` = none. |
+| `magType` | Magnetometer found: `1` = AK8963 (MPU-9250), `2` = HMC5883L, `3` = QMC5883L, `4` = QMC5883P (HP5883), `0` = none. |
 | `whoAmI` | MPU-9250 chip ID (only in MPU mode). `113` (0x71) = genuine MPU-9250, `112` (0x70) or `104` (0x68) = clones, `0` = no reply. |
 | `magWhoAmI` | AK8963 chip ID (only in MPU mode). `72` (0x48) = genuine, `0` = not found. |
 | `magPath` | MPU magnetometer access: `1` = I2C bypass, `2` = internal I2C master, `0` = none. |

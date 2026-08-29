@@ -275,13 +275,14 @@ class Mpu9250Driver {
 };
 
 /*
- * Minimal GY-271 magnetometer driver (HMC5883L and QMC5883L breakouts).
+ * Minimal GY-271 magnetometer driver. Supports the common chip variants:
+ * HMC5883L (0x1E), QMC5883L (0x0D) and the newer QMC5883P / "HP5883" (0x2C).
  * A 2-axis magnetometer cannot measure tilt, so the heading is only
  * accurate while the module is held level - no accelerometer available.
  */
 class Gy271Driver {
   public:
-    enum MagType : uint8_t { MAG_NONE = 0, MAG_HMC5883L = 1, MAG_QMC5883L = 2 };
+    enum MagType : uint8_t { MAG_NONE = 0, MAG_HMC5883L = 2, MAG_QMC5883L = 3, MAG_QMC5883P = 4 };
 
   private:
     static constexpr uint8_t HMC_ADDR = 0x1E;
@@ -295,6 +296,13 @@ class Gy271Driver {
     static constexpr uint8_t QMC_REG_CTRL1  = 0x09;
     static constexpr uint8_t QMC_REG_CTRL2  = 0x0A;
     static constexpr uint8_t QMC_REG_PERIOD = 0x0B;
+    static constexpr uint8_t QMC_P_ADDR     = 0x2C; // QMC5883P / HP5883
+    static constexpr uint8_t QMC_P_REG_ID    = 0x00; // chip ID, 0x80
+    static constexpr uint8_t QMC_P_REG_DATA  = 0x01; // X LSB, X MSB, Y LSB, Y MSB, Z LSB, Z MSB
+    static constexpr uint8_t QMC_P_REG_STATUS = 0x09;
+    static constexpr uint8_t QMC_P_REG_CTRL1 = 0x0A;
+    static constexpr uint8_t QMC_P_REG_CTRL2 = 0x0B;
+    static constexpr uint8_t QMC_P_REG_SIGN  = 0x29;
 
     uint8_t _addr = 0;
     MagType _type = MAG_NONE;
@@ -328,6 +336,19 @@ class Gy271Driver {
         _type = MAG_QMC5883L;
         return true;
       }
+      // QMC5883P (HP5883): chip ID 0x80 at register 0x00, address 0x2C
+      uint8_t chipid = 0;
+      if (readReg(QMC_P_ADDR, QMC_P_REG_ID, chipid) && chipid == 0x80) {
+        _addr = QMC_P_ADDR;
+        writeReg(QMC_P_ADDR, QMC_P_REG_CTRL2, 0x80); // soft reset
+        delay(5);
+        writeReg(QMC_P_ADDR, QMC_P_REG_SIGN, 0x06);  // define XYZ sign
+        writeReg(QMC_P_ADDR, QMC_P_REG_CTRL2, 0x08); // Set/Reset on, 8G range
+        writeReg(QMC_P_ADDR, QMC_P_REG_CTRL1, 0xCB); // continuous, 100 Hz, OSR 8/8
+        delay(20);
+        _type = MAG_QMC5883P;
+        return true;
+      }
       return false;
     }
 
@@ -344,6 +365,14 @@ class Gy271Driver {
       if (_type == MAG_QMC5883L) {
         uint8_t buf[6];
         if (!readRegs(_addr, QMC_REG_DATA, buf, 6)) return false;
+        mag[0] = (int16_t)(buf[0] | (buf[1] << 8)); // X, little-endian
+        mag[1] = (int16_t)(buf[2] | (buf[3] << 8)); // Y
+        mag[2] = (int16_t)(buf[4] | (buf[5] << 8)); // Z
+        return true;
+      }
+      if (_type == MAG_QMC5883P) {
+        uint8_t buf[6];
+        if (!readRegs(_addr, QMC_P_REG_DATA, buf, 6)) return false;
         mag[0] = (int16_t)(buf[0] | (buf[1] << 8)); // X, little-endian
         mag[1] = (int16_t)(buf[2] | (buf[3] << 8)); // Y
         mag[2] = (int16_t)(buf[4] | (buf[5] << 8)); // Z
