@@ -74,6 +74,7 @@ class Mpu9250Compass : public Usermod {
     bool     _accelOK        = false;   // accelerometer data usable (tilt effects)
     bool     _magOK          = false;   // magnetometer usable (compass)
     float    _gx = 0.0f, _gy = 1.0f;    // gravity direction on the screen plane (for tilt effects)
+    float    _effTilt = 0.0f;            // axis-selected 1D tilt (-1..1) shared with WLED effects
     uint8_t  _initAddr       = 0;
     int      _initSda        = -1;
     int      _initScl        = -1;
@@ -124,7 +125,8 @@ class Mpu9250Compass : public Usermod {
     void addToJsonState(JsonObject& obj) override;
     void readFromJsonState(JsonObject& obj) override;
     void addToJsonInfo(JsonObject& obj) override;
-    uint16_t getId() override { return USERMOD_ID_UNSPECIFIED; }
+    uint16_t getId() override { return USERMOD_ID_MPU9250_COMPASS; }
+    bool getUMData(um_data_t **data) override;
 
     // tilt data used by the registered "Falling Sand" effect
     // (gx, gy) = unit vector of gravity projected on the display plane

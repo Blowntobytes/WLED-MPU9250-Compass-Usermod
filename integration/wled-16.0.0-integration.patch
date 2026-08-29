@@ -64,10 +64,10 @@ index 0000000..2bafdd5
 \ No newline at end of file
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
 new file mode 100644
-index 0000000..d9d1442
+index 0000000..71263ed
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
-@@ -0,0 +1,1132 @@
+@@ -0,0 +1,1144 @@
 +/*
 + * WLED usermod: MPU-9250 compass LED display (implementation)
 + * See usermod_mpu9250_compass.h for details.
@@ -781,9 +781,20 @@ index 0000000..d9d1442
 +  initialized = true;
 +  parseColor(northColorStr, _northColor);
 +  parseColor(otherColorStr, _otherColor);
++  // expose tilt data to WLED effects (drives the sensor-controlled PS 1D Balance)
++  um_data = new um_data_t();
++  um_data->u_size = 1;
++  um_data->u_type = new um_types_t[1]{ UMT_FLOAT };
++  um_data->u_data = new void*[1];
++  um_data->u_data[0] = &_effTilt;
 +  strip.addEffect(255, &mode_falling_sand, _data_FX_MODE_FALLING_SAND);
 +  strip.addEffect(255, &mode_bubble_level, _data_FX_MODE_BUBBLE_LEVEL);
 +  initSensor();
++}
++
++bool Mpu9250Compass::getUMData(um_data_t **data) {
++  if (data) { *data = um_data; return true; }
++  return false;
 +}
 +
 +/* ---------------------------------------------------------------- loop */
@@ -843,6 +854,7 @@ index 0000000..d9d1442
 +    _gy = _gy * (1.0f - a) + ngy * a;
 +    float nm = sqrtf(_gx * _gx + _gy * _gy);
 +    if (nm > 0.01f) { _gx /= nm; _gy /= nm; }
++    _effTilt = (tiltAxis == 2) ? _gy : _gx; // axis-selected 1D tilt for WLED effects
 +    roll  = atan2f(ay, az) * 180.0f / PI_F;
 +    pitch = atan2f(-ax, sqrtf(ay * ay + az * az)) * 180.0f / PI_F;
 +  } else {
@@ -1202,10 +1214,10 @@ index 0000000..d9d1442
 +REGISTER_USERMOD(mpu9250_compass);
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.h b/usermods/mpu9250_compass/usermod_mpu9250_compass.h
 new file mode 100644
-index 0000000..4a2eade
+index 0000000..5c251ca
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.h
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,137 @@
 +#pragma once
 +
 +/*
@@ -1282,6 +1294,7 @@ index 0000000..4a2eade
 +    bool     _accelOK        = false;   // accelerometer data usable (tilt effects)
 +    bool     _magOK          = false;   // magnetometer usable (compass)
 +    float    _gx = 0.0f, _gy = 1.0f;    // gravity direction on the screen plane (for tilt effects)
++    float    _effTilt = 0.0f;            // axis-selected 1D tilt (-1..1) shared with WLED effects
 +    uint8_t  _initAddr       = 0;
 +    int      _initSda        = -1;
 +    int      _initScl        = -1;
@@ -1332,7 +1345,8 @@ index 0000000..4a2eade
 +    void addToJsonState(JsonObject& obj) override;
 +    void readFromJsonState(JsonObject& obj) override;
 +    void addToJsonInfo(JsonObject& obj) override;
-+    uint16_t getId() override { return USERMOD_ID_UNSPECIFIED; }
++    uint16_t getId() override { return USERMOD_ID_MPU9250_COMPASS; }
++    bool getUMData(um_data_t **data) override;
 +
 +    // tilt data used by the registered "Falling Sand" effect
 +    // (gx, gy) = unit vector of gravity projected on the display plane
@@ -1341,3 +1355,57 @@ index 0000000..4a2eade
 +    inline bool  tiltAvailable() const { return _accelOK; }
 +    inline uint8_t tiltAxisSel() const { return tiltAxis; }
 +};
+diff --git a/wled00/FX.cpp b/wled00/FX.cpp
+index bd42d1a..a303afb 100644
+--- a/wled00/FX.cpp
++++ b/wled00/FX.cpp
+@@ -10164,17 +10164,26 @@ void mode_particleBalance(void) {
+     }
+   }
+ 
+-  if (SEGMENT.call % (((255 - SEGMENT.speed) >> 6) + 1) == 0) { // how often the force is applied depends on speed setting
+-    int32_t xgravity;
+-    int32_t increment = (SEGMENT.speed >> 6) + 1;
+-    SEGENV.aux0 += increment;
+-    if (SEGMENT.check3) // random, use perlin noise
+-      xgravity = ((int16_t)perlin8(SEGENV.aux0) - 128);
+-    else // sinusoidal
+-      xgravity = (int16_t)cos8_t(SEGENV.aux0) - 128;//((int32_t)(SEGMENT.custom3 << 2) * cos8(SEGENV.aux0)
+-    // scale the force
+-    xgravity = (xgravity * ((SEGMENT.custom3+1) << 2)) / 128; // xgravity: -127 to +127
+-    PartSys->applyForce(xgravity);
++  // sensor-driven force: if the MPU9250 compass usermod is present, pull the
++  // particles toward the low side with real gravity; otherwise use the
++  // original virtual (sine/perlin) force
++  um_data_t *um_tilt = nullptr;
++  if (UsermodManager::getUMData(&um_tilt, USERMOD_ID_MPU9250_COMPASS) && um_tilt && um_tilt->u_size >= 1) {
++    float gx = *(float*)um_tilt->u_data[0]; // axis-selected tilt, -1..1
++    PartSys->applyForce((int32_t)(gx * 127.0f));
++  } else {
++    if (SEGMENT.call % (((255 - SEGMENT.speed) >> 6) + 1) == 0) { // how often the force is applied depends on speed setting
++      int32_t xgravity;
++      int32_t increment = (SEGMENT.speed >> 6) + 1;
++      SEGENV.aux0 += increment;
++      if (SEGMENT.check3) // random, use perlin noise
++        xgravity = ((int16_t)perlin8(SEGENV.aux0) - 128);
++      else // sinusoidal
++        xgravity = (int16_t)cos8_t(SEGENV.aux0) - 128;//((int32_t)(SEGMENT.custom3 << 2) * cos8(SEGENV.aux0)
++      // scale the force
++      xgravity = (xgravity * ((SEGMENT.custom3+1) << 2)) / 128; // xgravity: -127 to +127
++      PartSys->applyForce(xgravity);
++    }
+   }
+ 
+   uint32_t randomindex = hw_random16(PartSys->usedParticles);
+diff --git a/wled00/const.h b/wled00/const.h
+index 62d9c45..8df8f52 100644
+--- a/wled00/const.h
++++ b/wled00/const.h
+@@ -225,6 +225,7 @@ static_assert(WLED_MAX_BUSSES <= 32, "WLED_MAX_BUSSES exceeds hard limit");
+ #define USERMOD_ID_RF433                 56     //Usermod "usermod_v2_RF433.h"
+ #define USERMOD_ID_BRIGHTNESS_FOLLOW_SUN 57     //Usermod "usermod_v2_brightness_follow_sun.h"
+ #define USERMOD_ID_USER_FX               58     //Usermod "user_fx"
++#define USERMOD_ID_MPU9250_COMPASS       59     //Usermod "usermod_mpu9250_compass.h"
+ 
+ //Wifi encryption type
+ #ifdef WLED_ENABLE_WPA_ENTERPRISE

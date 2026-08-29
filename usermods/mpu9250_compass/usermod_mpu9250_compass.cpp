@@ -711,9 +711,20 @@ void Mpu9250Compass::setup() {
   initialized = true;
   parseColor(northColorStr, _northColor);
   parseColor(otherColorStr, _otherColor);
+  // expose tilt data to WLED effects (drives the sensor-controlled PS 1D Balance)
+  um_data = new um_data_t();
+  um_data->u_size = 1;
+  um_data->u_type = new um_types_t[1]{ UMT_FLOAT };
+  um_data->u_data = new void*[1];
+  um_data->u_data[0] = &_effTilt;
   strip.addEffect(255, &mode_falling_sand, _data_FX_MODE_FALLING_SAND);
   strip.addEffect(255, &mode_bubble_level, _data_FX_MODE_BUBBLE_LEVEL);
   initSensor();
+}
+
+bool Mpu9250Compass::getUMData(um_data_t **data) {
+  if (data) { *data = um_data; return true; }
+  return false;
 }
 
 /* ---------------------------------------------------------------- loop */
@@ -773,6 +784,7 @@ void Mpu9250Compass::updateHeading() {
     _gy = _gy * (1.0f - a) + ngy * a;
     float nm = sqrtf(_gx * _gx + _gy * _gy);
     if (nm > 0.01f) { _gx /= nm; _gy /= nm; }
+    _effTilt = (tiltAxis == 2) ? _gy : _gx; // axis-selected 1D tilt for WLED effects
     roll  = atan2f(ay, az) * 180.0f / PI_F;
     pitch = atan2f(-ax, sqrtf(ay * ay + az * az)) * 180.0f / PI_F;
   } else {

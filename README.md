@@ -41,7 +41,10 @@ color/effect, so you can see at a glance which way is North.
   and 2D matrices, and needs only the accelerometer (so it works on a plain
   MPU-6500 with no magnetometer).
 * **"Bubble Level" effect**: a tilt-driven spirit level — a configurable-size
-  bubble floats opposite gravity, coloured from any palette.
+  bubble floats opposite gravity, coloured from the Fx/Bg colour slots.
+* **Sensor-driven "PS 1D Balance"**: the built-in WLED particle effect's
+  virtual gravity is replaced with real tilt data from the accelerometer (it
+  falls back to the original virtual force when this usermod isn't built in).
 * **JSON API** integration: live heading (plus pitch/roll for the MPU-9250)
   and raw sensor data in `/json/state`, calibration commands, and sensor
   readout on the Info page.
@@ -163,7 +166,14 @@ bubble is a vertical bar.
 
 The usermod is **compile-time optional**: it is only built when it appears in
 the `custom_usermods` list of your PlatformIO environment, so the stock WLED
-build is completely unaffected. No core WLED files are modified.
+build is completely unaffected.
+
+> This patch additionally makes two small core edits (so the built-in
+> **PS 1D Balance** effect can read tilt from this usermod):
+> `wled00/FX.cpp` (sensor force in `mode_particleBalance`, with a fallback to
+> the original virtual force when the usermod isn't present) and
+> `wled00/const.h` (a new usermod ID). Both are guarded so the stock build
+> still works without the usermod.
 
 ### Option A — apply the patch (recommended)
 
