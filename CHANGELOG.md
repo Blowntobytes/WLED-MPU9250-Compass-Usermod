@@ -10,6 +10,23 @@ Versioning scheme:
 * **MINOR** (v1.1.0, v1.2.0, ...) — new features, backwards compatible.
 * **PATCH** (v1.1.1, v1.1.2, ...) — bug fixes.
 
+## [1.2.0] - 2026-08-28
+
+### Added
+- New custom WLED effect **"Falling Sand"** (tilt-driven):
+  - **1D strips**: a single contiguous bag of sand (no gaps) that slides
+    toward the low end one pixel at a time under tilt. **Effect speed** sets
+    the pause between steps, **Flow** (Custom 1) sets pixels per step
+    (default 1 = one pixel at a time), **Intensity** sets the bag size.
+  - **2D matrices**: a falling-sand grid that flips over (falls the other
+    way) when full instead of vanishing.
+  - Sand is coloured from the segment palette.
+- Accelerometer usable **without** a magnetometer — tilt effects work on a
+  plain MPU-6500 (common "fake MPU-9250" modules).
+- `tiltAxis` setting: 0 = both axes, 1 = left/right only, 2 = forward/back only.
+- `overlayEnabled` setting to disable the compass overlay (needs a magnetometer).
+- Diagnostics: `accelAvailable`, `magAvailable`, `tiltAxis`, `tiltX`, `tiltY`.
+
 ## [1.1.0] - 2026-08-28
 
 ### Added
