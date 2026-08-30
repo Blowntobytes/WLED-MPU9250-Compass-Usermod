@@ -88,6 +88,11 @@ class Mpu9250Compass : public Usermod {
     int16_t  calMin[3] = {0, 0, 0};
     int16_t  calMax[3] = {0, 0, 0};
 
+    // ---- one-shot UI buttons (settings page checkboxes, reset after use) ----
+    bool calibStart = false; // "Calibrate"      -> begin figure-8 calibration
+    bool calibSave  = false; // "Save calibration" -> apply measured offsets/scales
+    bool calibReset = false; // "Reset calibration" -> clear offsets/scales
+
     // ---- magnetometer axis auto-detection ----
     bool     magAuto     = false;
     uint32_t magAutoStart = 0;
@@ -120,6 +125,7 @@ class Mpu9250Compass : public Usermod {
     void loop() override;
     void addToConfig(JsonObject& root) override;
     bool readFromConfig(JsonObject& root) override;
+    void appendConfigData() override;
     void addToJsonState(JsonObject& obj) override;
     void readFromJsonState(JsonObject& obj) override;
     void addToJsonInfo(JsonObject& obj) override;

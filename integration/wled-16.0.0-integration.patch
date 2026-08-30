@@ -64,10 +64,10 @@ index 0000000..2bafdd5
 \ No newline at end of file
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
 new file mode 100644
-index 0000000..74cd79a
+index 0000000..3bb7f9d
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
-@@ -0,0 +1,1216 @@
+@@ -0,0 +1,1237 @@
 +/*
 + * WLED usermod: MPU-9250 compass LED display (implementation)
 + * See usermod_mpu9250_compass.h for details.
@@ -1095,6 +1095,10 @@ index 0000000..74cd79a
 +  top["magScaleY"]  = magScale[1];
 +  top["magScaleZ"]  = magScale[2];
 +  top["headingOffset"] = headingOffset;
++  // one-shot calibration buttons (always reset to false after use)
++  top["calibrate"]        = calibStart;
++  top["saveCalibration"]  = calibSave;
++  top["resetCalibration"] = calibReset;
 +}
 +
 +bool Mpu9250Compass::readFromConfig(JsonObject& root) {
@@ -1120,7 +1124,24 @@ index 0000000..74cd79a
 +  complete &= getJsonValue(top["magScaleZ"],  magScale[2],  1.0f);
 +  complete &= getJsonValue(top["headingOffset"], headingOffset, 0.0f);
 +
++  // one-shot calibration buttons: check the box, Save, and the action runs.
++  // They are reset to false immediately so they don't persist or re-trigger.
++  bool bStart = false, bSave = false, bReset = false;
++  complete &= getJsonValue(top["calibrate"],        bStart, false);
++  complete &= getJsonValue(top["saveCalibration"],  bSave,  false);
++  complete &= getJsonValue(top["resetCalibration"], bReset, false);
++  if (bStart) startCalibration();
++  if (bSave)  finalizeCalibration();
++  if (bReset) resetCalibration();
++  calibStart = calibSave = calibReset = false;
++
 +  return complete;
++}
++
++void Mpu9250Compass::appendConfigData() {
++  oappend(F("addInfo('MPU9250Compass:calibrate',1,'Check and Save to START figure-8 calibration');"));
++  oappend(F("addInfo('MPU9250Compass:saveCalibration',1,'Check and Save to APPLY measured calibration');"));
++  oappend(F("addInfo('MPU9250Compass:resetCalibration',1,'Check and Save to CLEAR calibration');"));
 +}
 +
 +/* ------------------------------------------------------ JSON API */
@@ -1286,10 +1307,10 @@ index 0000000..74cd79a
 +REGISTER_USERMOD(mpu9250_compass);
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.h b/usermods/mpu9250_compass/usermod_mpu9250_compass.h
 new file mode 100644
-index 0000000..6a84a87
+index 0000000..3eba969
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.h
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,149 @@
 +#pragma once
 +
 +/*
@@ -1380,6 +1401,11 @@ index 0000000..6a84a87
 +    int16_t  calMin[3] = {0, 0, 0};
 +    int16_t  calMax[3] = {0, 0, 0};
 +
++    // ---- one-shot UI buttons (settings page checkboxes, reset after use) ----
++    bool calibStart = false; // "Calibrate"      -> begin figure-8 calibration
++    bool calibSave  = false; // "Save calibration" -> apply measured offsets/scales
++    bool calibReset = false; // "Reset calibration" -> clear offsets/scales
++
 +    // ---- magnetometer axis auto-detection ----
 +    bool     magAuto     = false;
 +    uint32_t magAutoStart = 0;
@@ -1412,6 +1438,7 @@ index 0000000..6a84a87
 +    void loop() override;
 +    void addToConfig(JsonObject& root) override;
 +    bool readFromConfig(JsonObject& root) override;
++    void appendConfigData() override;
 +    void addToJsonState(JsonObject& obj) override;
 +    void readFromJsonState(JsonObject& obj) override;
 +    void addToJsonInfo(JsonObject& obj) override;

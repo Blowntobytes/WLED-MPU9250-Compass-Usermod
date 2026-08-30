@@ -1025,6 +1025,10 @@ void Mpu9250Compass::addToConfig(JsonObject& root) {
   top["magScaleY"]  = magScale[1];
   top["magScaleZ"]  = magScale[2];
   top["headingOffset"] = headingOffset;
+  // one-shot calibration buttons (always reset to false after use)
+  top["calibrate"]        = calibStart;
+  top["saveCalibration"]  = calibSave;
+  top["resetCalibration"] = calibReset;
 }
 
 bool Mpu9250Compass::readFromConfig(JsonObject& root) {
@@ -1050,7 +1054,24 @@ bool Mpu9250Compass::readFromConfig(JsonObject& root) {
   complete &= getJsonValue(top["magScaleZ"],  magScale[2],  1.0f);
   complete &= getJsonValue(top["headingOffset"], headingOffset, 0.0f);
 
+  // one-shot calibration buttons: check the box, Save, and the action runs.
+  // They are reset to false immediately so they don't persist or re-trigger.
+  bool bStart = false, bSave = false, bReset = false;
+  complete &= getJsonValue(top["calibrate"],        bStart, false);
+  complete &= getJsonValue(top["saveCalibration"],  bSave,  false);
+  complete &= getJsonValue(top["resetCalibration"], bReset, false);
+  if (bStart) startCalibration();
+  if (bSave)  finalizeCalibration();
+  if (bReset) resetCalibration();
+  calibStart = calibSave = calibReset = false;
+
   return complete;
+}
+
+void Mpu9250Compass::appendConfigData() {
+  oappend(F("addInfo('MPU9250Compass:calibrate',1,'Check and Save to START figure-8 calibration');"));
+  oappend(F("addInfo('MPU9250Compass:saveCalibration',1,'Check and Save to APPLY measured calibration');"));
+  oappend(F("addInfo('MPU9250Compass:resetCalibration',1,'Check and Save to CLEAR calibration');"));
 }
 
 /* ------------------------------------------------------ JSON API */
