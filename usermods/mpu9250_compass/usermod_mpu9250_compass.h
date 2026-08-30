@@ -88,6 +88,12 @@ class Mpu9250Compass : public Usermod {
     int16_t  calMin[3] = {0, 0, 0};
     int16_t  calMax[3] = {0, 0, 0};
 
+    // ---- magnetometer axis auto-detection ----
+    bool     magAuto     = false;
+    uint32_t magAutoStart = 0;
+    int16_t  magMin[3] = {32767, 32767, 32767};
+    int16_t  magMax[3] = {-32768, -32768, -32768};
+
     // ---- diagnostics ----
     uint8_t  whoAmI    = 0;      // MPU-6500 WHO_AM_I value (0x71 genuine MPU-9250, 0x70/0x68 clones, 0 = no reply)
     uint8_t  magWhoAmI = 0;      // AK8963 WIA value (0x48 genuine magnetometer, 0 = not found)
@@ -98,6 +104,8 @@ class Mpu9250Compass : public Usermod {
 
     void initSensor();
     void scanI2CBus();
+    void startMagAuto();
+    void finishMagAuto();
     const char* statusText() const;
     void updateHeading();
     void trackCalibration();

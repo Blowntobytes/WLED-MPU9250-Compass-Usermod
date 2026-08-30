@@ -837,6 +837,13 @@ void Mpu9250Compass::loop() {
   if (ok) {
     readErrors = 0;
     if (!sensorAvailable) sensorAvailable = true; // sensor recovered
+    if (magAuto && _magOK) { // track axis extents while rotating for auto-detect
+      for (uint8_t i = 0; i < 3; i++) {
+        if (mag[i] < magMin[i]) magMin[i] = mag[i];
+        if (mag[i] > magMax[i]) magMax[i] = mag[i];
+      }
+      if (millis() - magAutoStart > 12000) finishMagAuto();
+    }
     updateHeading();
     if (calibrating) trackCalibration();
     strip.trigger(); // keep the overlay rendering (also animates effects)
@@ -1064,6 +1071,7 @@ void Mpu9250Compass::addToJsonState(JsonObject& obj) {
   top["sensorKind"] = _sensorKind; // 0=none, 1=MPU-9250, 2=GY-271
   top["tiltAxis"]   = tiltAxis;    // Falling Sand tilt axis: 0=both, 1=left/right, 2=forward/back
   top["magMap"]     = magMap;      // GY-271 heading axis pair
+  top["magAuto"]    = magAuto;     // true while auto-detect is collecting rotation data
   top["tiltX"]      = _gx;         // gravity on display X (-1..1)
   top["tiltY"]      = _gy;         // gravity on display Y (-1..1)
   JsonArray scan = top.createNestedArray("i2cScan");
@@ -1104,6 +1112,49 @@ void Mpu9250Compass::readFromJsonState(JsonObject& obj) {
   if (top["resetCalibration"] | false) resetCalibration();
   if (top["scanI2C"] | false) { scanI2CBus(); initSensor(); }
   if (top["reinit"] | false) initSensor();
+  if (top["autoMag"]) {
+    bool a = top["autoMag"].as<bool>();
+    if (a) startMagAuto();
+    else if (magAuto) finishMagAuto();
+  }
+}
+
+/* ------------------------------------------------------ mag axis auto-detect */
+
+void Mpu9250Compass::startMagAuto() {
+  magAuto = true;
+  magAutoStart = millis();
+  for (uint8_t i = 0; i < 3; i++) { magMin[i] = 32767; magMax[i] = -32768; }
+}
+
+void Mpu9250Compass::finishMagAuto() {
+  if (!magAuto) return;
+  magAuto = false;
+  if (!_magOK) return;
+  // the axis with the smallest range is the one aligned with the rotation axis
+  // (vertical when held level); the other two are the horizontal heading plane
+  int32_t range[3];
+  for (uint8_t i = 0; i < 3; i++) range[i] = magMax[i] - magMin[i];
+  int vert = 0;
+  if (range[1] < range[vert]) vert = 1;
+  if (range[2] < range[vert]) vert = 2;
+  int a1 = -1, a2 = -1;
+  for (uint8_t i = 0; i < 3; i++) if ((int)i != vert) { if (a1 < 0) a1 = i; else a2 = i; }
+  // map (A, B) -> magMap, heading = atan2(B, A)
+  uint8_t best = 0xFF;
+  for (uint8_t m = 0; m < 6; m++) {
+    int A = -1, B = -1;
+    switch (m) {
+      case 0: A = 0; B = 1; break;
+      case 1: A = 1; B = 0; break;
+      case 2: A = 0; B = 2; break;
+      case 3: A = 2; B = 0; break;
+      case 4: A = 1; B = 2; break;
+      case 5: A = 2; B = 1; break;
+    }
+    if (A == a1 && B == a2) { best = m; break; }
+  }
+  if (best != 0xFF) magMap = best;
 }
 
 void Mpu9250Compass::addToJsonInfo(JsonObject& root) {

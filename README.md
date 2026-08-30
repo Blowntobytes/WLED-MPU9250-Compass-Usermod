@@ -429,7 +429,7 @@ Bg colour  = FF00FF
 | GY-271 heading wrong when tilted     | Expected: a magnetometer-only module can't measure tilt. Mount the GY-271 **level** (the MPU-9250 mode provides tilt compensation instead). |
 | Heading is constant/wrong            | Run the calibration; check `useCalibration`; check `headingOffset` and the +X axis convention. |
 | Compass effect: north jumps / jitters| Increase the **Compass** effect's Smoothness slider (effect speed). |
-| Compass heading locked to a small range (e.g. 250–315) | The GY-271's chip axes can be rotated on the board (common on QMC5883P). Try the `magMap` values (`1`…`5`) until the heading spans the full 0–360° while rotating the module level; then calibrate. |
+| Compass heading locked to a small range (e.g. 250–315) | The GY-271's chip axes can be rotated on the board (common on QMC5883P). Auto-detect instead of guessing: `curl -X POST http://<wled-ip>/json/state -d '{"MPU9250Compass":{"autoMag":true}}'`, rotate the module **flat** through a few full circles for ~12 s, then send `{"autoMag":false}`. It sets `magMap` automatically. |
 | Compass effect: north sector misaligned | One LED = 360/segment-length degrees; adjust the effect's North size and use `headingOffset` to align. |
 | Pin/address change has no effect     | Reboot after changing `sdaPin`/`sclPin`/`i2cAddress` (changes are applied automatically on the next loop as well). |
 
