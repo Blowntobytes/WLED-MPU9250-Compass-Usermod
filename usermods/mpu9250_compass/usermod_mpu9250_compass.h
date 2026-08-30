@@ -4,21 +4,22 @@
  * WLED usermod: MPU-9250 / GY-271 compass LED display
  *
  * Turns a NeoPixel strip/ring into a compass. Two sensor options:
- *   - MPU-9250 9-axis IMU (gyro + accel + magnetometer) on the I2C bus.
- *     Computes a tilt-compensated magnetic heading from the magnetometer
+ *   - MPU-9250 / ICM-20948 9-axis IMU (gyro + accel + magnetometer) on the I2C
+ *     bus. Computes a tilt-compensated magnetic heading from the magnetometer
  *     and accelerometer data.
- *   - GY-271 magnetometer breakout (HMC5883L or QMC5883L). Simpler 2-axis
- *     heading (module must be held level), no tilt compensation needed.
+ *   - GY-271 magnetometer breakout (HMC5883L, QMC5883L or QMC5883P). Simpler
+ *     2-axis heading (module must be held level), no tilt compensation.
  *
- * The LEDs that point towards magnetic North render in a configurable
- * color/effect, all remaining LEDs render in a different configurable
- * color/effect.
+ * Three custom effects are registered for the compass and tilt features:
+ *   - "Compass"    : highlights the LEDs pointing toward magnetic North.
+ *   - "Falling Sand": sand pile that flows under gravity (accelerometer tilt).
+ *   - "Bubble Level": a spirit level driven by the accelerometer.
  *
  * WLED version: 16.0.0
  *
  * Wiring (ESP32 defaults): VCC -> 3.3V, GND -> GND, SDA -> 21, SCL -> 22.
- * MPU-9250 is detected at I2C address 0x68 (AD0=0) or 0x69 (AD0=1).
- * GY-271 is auto-detected: HMC5883L at 0x1E or QMC5883L at 0x0D.
+ * MPU-9250/ICM-20948 is detected at I2C address 0x68 (AD0=0) or 0x69 (AD0=1).
+ * GY-271 is auto-detected: HMC5883L at 0x1E, QMC5883L at 0x0D or QMC5883P at 0x2C.
  * begin() fails gracefully: if no sensor is found the usermod stays
  * disabled and the strip behaves normally.
  *
@@ -63,11 +64,11 @@ class Mpu9250Compass : public Usermod {
     // ---- runtime state ----
     bool     sensorAvailable = false;
     bool     initialized     = false;
-    uint8_t  _sensorKind     = 0;       // 0 = none, 1 = MPU-9250, 2 = GY-271
+    uint8_t  _sensorKind     = 0;       // 0 = none, 1 = MPU-9250/ICM-20948, 2 = GY-271
     bool     _accelOK        = false;   // accelerometer data usable (tilt effects)
     bool     _magOK          = false;   // magnetometer usable (compass)
-    float    _gx = 0.0f, _gy = 1.0f;    // gravity direction on the screen plane (for tilt effects)
-    float    _effTilt = 0.0f;            // axis-selected 1D tilt (-1..1) shared with WLED effects
+    float    _gx = 0.0f, _gy = 1.0f;    // gravity unit vector on the display plane (tilt effects)
+    float    _effTilt = 0.0f;           // axis-selected 1D tilt (-1..1) shared with WLED effects
     float    _rawGX = 0.0f, _rawGY = 0.0f; // continuous raw gravity on X/Y (in g), no dead zone - bubble level
     uint8_t  _initAddr       = 0;
     int      _initSda        = -1;
@@ -132,10 +133,6 @@ class Mpu9250Compass : public Usermod {
     void addToJsonInfo(JsonObject& obj) override;
     uint16_t getId() override { return USERMOD_ID_MPU9250_COMPASS; }
     bool getUMData(um_data_t **data) override;
-
-    // MPU-6500/MPU-9250/ICM-20948 core info (the ICM-20948 is a register-compatible
-    // successor with an embedded AK09916 magnetometer)
-    inline bool mpuIsICM() const { return _mpuIsICM; }
 
     // tilt data used by the registered "Falling Sand" effect
     // (gx, gy) = unit vector of gravity projected on the display plane

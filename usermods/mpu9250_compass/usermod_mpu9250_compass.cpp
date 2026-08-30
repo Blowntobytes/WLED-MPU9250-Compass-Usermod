@@ -36,7 +36,6 @@ constexpr uint8_t REG_INT_PIN_CFG  = 0x37;
 constexpr uint8_t AK_WIA   = 0x00;
 constexpr uint8_t AK_ST1   = 0x02;
 constexpr uint8_t AK_HXL   = 0x03;
-constexpr uint8_t AK_ST2   = 0x09;
 constexpr uint8_t AK_CNTL1 = 0x0A;
 constexpr uint8_t AK_CNTL2 = 0x0B;
 constexpr uint8_t AK_ASAX  = 0x10;
@@ -51,13 +50,10 @@ constexpr uint8_t ICM_INT_PIN_CFG   = 0x0F;
 constexpr uint8_t ICM_ACCEL_CONFIG  = 0x14;
 constexpr uint8_t ICM_ACCEL_XOUT_H  = 0x2D;
 constexpr uint8_t ICM_GYRO_XOUT_H   = 0x33;
-constexpr uint8_t ICM_EXT_SENS_DATA_00 = 0x3B;
-constexpr uint8_t ICM_BANK_SEL      = 0x7F;
 
 // AK09916 magnetometer register map (ICM-20948's embedded compass)
 constexpr uint8_t AK16_I2C_ADDR = 0x0C;
 constexpr uint8_t AK16_WIA1  = 0x00; // 0x48 (AKM company ID)
-constexpr uint8_t AK16_WIA2  = 0x01; // 0x09 (AK09916 device ID)
 constexpr uint8_t AK16_ST1   = 0x10; // bit0 = DRDY
 constexpr uint8_t AK16_HXL   = 0x11; // X LSB, X MSB, Y LSB, Y MSB, Z LSB, Z MSB
 constexpr uint8_t AK16_ST2   = 0x18; // bit3 = HOFL (sensor overflow)
@@ -231,49 +227,42 @@ class Mpu9250Driver {
       _magWhoAmI = 0;
       _magPath = MAG_NONE;
       _isICM = false;
-      uint8_t who = 0;
       // ICM-20948 keeps its WHO_AM_I at 0x00 (0xEA), the MPU-6500 at 0x75.
       // Read both: an ICM-20948 may not respond to 0x75 and vice versa.
-      if (!readReg(_addr, REG_WHO_AM_I, who)) who = 0;
+      uint8_t who = 0;
+      readReg(_addr, REG_WHO_AM_I, who);
       _whoAmI = who;
-      if (who == 0x71 || who == 0x70 || who == 0x68) {
-        _isICM = false;
-      } else {
+      if (who != 0x71 && who != 0x70 && who != 0x68) {
         uint8_t whoICM = 0;
-        if (!readReg(_addr, ICM_WHO_AM_I, whoICM)) whoICM = 0;
+        readReg(_addr, ICM_WHO_AM_I, whoICM);
         if (whoICM == 0xEA) {
           _whoAmI = whoICM;
           _isICM = true;
         } else {
-          // neither chip answered with a known ID
-          _whoAmI = who ? who : whoICM;
-          return false;
+          return false; // neither chip answered with a known ID
         }
       }
-      // reset the device
+      // reset the device, then wake all sensors
       uint8_t regPwr1  = _isICM ? ICM_PWR_MGMT_1  : REG_PWR_MGMT_1;
       uint8_t regPwr2  = _isICM ? ICM_PWR_MGMT_2  : REG_PWR_MGMT_2;
       uint8_t regUc    = _isICM ? ICM_USER_CTRL   : REG_USER_CTRL;
       uint8_t regIpcfg = _isICM ? ICM_INT_PIN_CFG : REG_INT_PIN_CFG;
       writeReg(_addr, regPwr1, 0x80);
       delay(100);
-      // clock source = PLL with X-axis gyroscope, wake up all sensors
-      writeReg(_addr, regPwr1, 0x01);
-      writeReg(_addr, regPwr2, 0x00);
+      writeReg(_addr, regPwr1, 0x01); // clock = PLL with X-axis gyro
+      writeReg(_addr, regPwr2, 0x00); // all sensors on
       if (_isICM) {
-        // ICM-20948: accel range +/-2g (register 0x14, bank 0)
-        writeReg(_addr, ICM_ACCEL_CONFIG, 0x00);
+        writeReg(_addr, ICM_ACCEL_CONFIG, 0x00); // ICM-20948: +/-2 g
       } else {
-        // sample rate 1 kHz / (1 + 4) = 200 Hz, DLPF 44 Hz
-        writeReg(_addr, REG_SMPLRT_DIV, 0x04);
-        writeReg(_addr, REG_CONFIG, 0x03);
-        writeReg(_addr, REG_GYRO_CONFIG, 0x08);   // +/-500 dps
-        writeReg(_addr, REG_ACCEL_CONFIG, 0x00);  // +/-2 g
+        writeReg(_addr, REG_SMPLRT_DIV, 0x04);   // 1 kHz / (1+4) = 200 Hz
+        writeReg(_addr, REG_CONFIG, 0x03);       // DLPF 44 Hz
+        writeReg(_addr, REG_GYRO_CONFIG, 0x08);  // +/-500 dps
+        writeReg(_addr, REG_ACCEL_CONFIG, 0x00); // +/-2 g
       }
       // magnetometer (optional - some boards are MPU-6500 without one):
-      // try I2C bypass first, then the internal I2C master
-      writeReg(_addr, regUc, 0x00);     // master off while in bypass
-      writeReg(_addr, regIpcfg, 0x02);  // I2C bypass enable
+      // try I2C bypass first, then the internal I2C master (MPU-6500 only)
+      writeReg(_addr, regUc, 0x00);    // master off while in bypass
+      writeReg(_addr, regIpcfg, 0x02); // I2C bypass enable
       if (initMagBypass()) return true;
       if (!_isICM && initMagMaster()) return true;
       // no magnetometer: the accelerometer/gyroscope still work (tilt effects)
@@ -305,58 +294,55 @@ class Mpu9250Driver {
       return true;
     }
 
-    // acc/gyr raw 16-bit; mag raw 16-bit (already multiplied by factory sens)
-    bool readAll(int16_t *acc, int16_t *gyr, int16_t *mag) {
-      if (!readAccelGyro(acc, gyr)) return false;
-      return readMag(mag);
+    // wait for the magnetometer data-ready bit; ~20 ms timeout
+    bool waitMagReady(uint8_t addr, uint8_t st1Reg) {
+      using namespace mpu9250;
+      uint8_t st1 = 0;
+      uint32_t start = millis();
+      do {
+        if (!readReg(addr, st1Reg, st1)) return false;
+        if (st1 & 0x01) return true;
+      } while (millis() - start < 20);
+      return false;
+    }
+
+    // little-endian X/Y/Z triple from the 6 data bytes (HXL..HZH)
+    void decodeMag(const uint8_t *buf, int16_t *mag) {
+      mag[0] = (int16_t)((buf[1] << 8) | buf[0]);
+      mag[1] = (int16_t)((buf[3] << 8) | buf[2]);
+      mag[2] = (int16_t)((buf[5] << 8) | buf[4]);
     }
 
     bool readMag(int16_t *mag) {
       using namespace mpu9250;
       if (_magPath == MAG_BYPASS) {
         if (_isICM) {
-          // AK09916: wait for DRDY, then read 6 bytes of X/Y/Z little-endian
-          uint8_t st1 = 0;
-          uint32_t start = millis();
-          do {
-            if (!readReg(AK16_I2C_ADDR, AK16_ST1, st1)) return false;
-            if (st1 & 0x01) break; // data ready
-          } while (millis() - start < 20);
-          if (!(st1 & 0x01)) return false;
+          // AK09916: wait for DRDY, then read 6 bytes of X/Y/Z
+          if (!waitMagReady(AK16_I2C_ADDR, AK16_ST1)) return false;
           uint8_t buf[6];
           if (!readRegs(AK16_I2C_ADDR, AK16_HXL, buf, 6)) return false;
-          mag[0] = (int16_t)((buf[1] << 8) | buf[0]);
-          mag[1] = (int16_t)((buf[3] << 8) | buf[2]);
-          mag[2] = (int16_t)((buf[5] << 8) | buf[4]);
           uint8_t st2 = 0;
           readReg(AK16_I2C_ADDR, AK16_ST2, st2); // ST2 read clears DRDY
           if (st2 & 0x08) return false; // magnetic sensor overflow (HOFL)
+          decodeMag(buf, mag);
           return true;
         }
-        uint8_t st1 = 0;
-        uint32_t start = millis();
-        do {
-          if (!readReg(AK8963_I2C_ADDR, AK_ST1, st1)) return false;
-          if (st1 & 0x01) break; // data ready
-        } while (millis() - start < 20);
-        if (!(st1 & 0x01)) return false;
+        // AK8963: wait for DRDY, read 7 bytes (data + ST2)
+        if (!waitMagReady(AK8963_I2C_ADDR, AK_ST1)) return false;
         uint8_t buf[7];
         if (!readRegs(AK8963_I2C_ADDR, AK_HXL, buf, 7)) return false;
         if (buf[6] & 0x08) return false; // magnetic sensor overflow (HOFL)
-        mag[0] = (int16_t)((buf[1] << 8) | buf[0]);
-        mag[1] = (int16_t)((buf[3] << 8) | buf[2]);
-        mag[2] = (int16_t)((buf[5] << 8) | buf[4]);
+        decodeMag(buf, mag);
         for (uint8_t i = 0; i < 3; i++)
           mag[i] = (int16_t)((float)mag[i] * _magSens[i]);
         return true;
       }
       if (_magPath == MAG_MASTER) {
+        // AK8963 read via the MPU's I2C master: data appears in EXT_SENS_DATA
         uint8_t buf[7];
         if (!readRegs(_addr, EXT_SENS_DATA_00, buf, 7)) return false;
         if (buf[6] & 0x08) return false; // magnetic sensor overflow (HOFL)
-        mag[0] = (int16_t)((buf[1] << 8) | buf[0]);
-        mag[1] = (int16_t)((buf[3] << 8) | buf[2]);
-        mag[2] = (int16_t)((buf[5] << 8) | buf[4]);
+        decodeMag(buf, mag);
         for (uint8_t i = 0; i < 3; i++)
           mag[i] = (int16_t)((float)mag[i] * _magSens[i]);
         return true;
@@ -390,7 +376,6 @@ class Gy271Driver {
     static constexpr uint8_t QMC_P_ADDR     = 0x2C; // QMC5883P / HP5883
     static constexpr uint8_t QMC_P_REG_ID    = 0x00; // chip ID, 0x80
     static constexpr uint8_t QMC_P_REG_DATA  = 0x01; // X LSB, X MSB, Y LSB, Y MSB, Z LSB, Z MSB
-    static constexpr uint8_t QMC_P_REG_STATUS = 0x09;
     static constexpr uint8_t QMC_P_REG_CTRL1 = 0x0A;
     static constexpr uint8_t QMC_P_REG_CTRL2 = 0x0B;
     static constexpr uint8_t QMC_P_REG_SIGN  = 0x29;
@@ -448,25 +433,19 @@ class Gy271Driver {
       if (_type == MAG_HMC5883L) {
         uint8_t buf[6];
         if (!readRegs(_addr, HMC_REG_DATA, buf, 6)) return false;
-        mag[0] = (int16_t)((buf[0] << 8) | buf[1]); // X
+        mag[0] = (int16_t)((buf[0] << 8) | buf[1]); // X, big-endian
         mag[1] = (int16_t)((buf[4] << 8) | buf[5]); // Y
         mag[2] = (int16_t)((buf[2] << 8) | buf[3]); // Z
         return true;
       }
-      if (_type == MAG_QMC5883L) {
+      if (_type == MAG_QMC5883L || _type == MAG_QMC5883P) {
+        // QMC5883L/P store X/Y/Z as little-endian triplets
+        uint8_t reg = (_type == MAG_QMC5883L) ? QMC_REG_DATA : QMC_P_REG_DATA;
         uint8_t buf[6];
-        if (!readRegs(_addr, QMC_REG_DATA, buf, 6)) return false;
-        mag[0] = (int16_t)(buf[0] | (buf[1] << 8)); // X, little-endian
-        mag[1] = (int16_t)(buf[2] | (buf[3] << 8)); // Y
-        mag[2] = (int16_t)(buf[4] | (buf[5] << 8)); // Z
-        return true;
-      }
-      if (_type == MAG_QMC5883P) {
-        uint8_t buf[6];
-        if (!readRegs(_addr, QMC_P_REG_DATA, buf, 6)) return false;
-        mag[0] = (int16_t)(buf[0] | (buf[1] << 8)); // X, little-endian
-        mag[1] = (int16_t)(buf[2] | (buf[3] << 8)); // Y
-        mag[2] = (int16_t)(buf[4] | (buf[5] << 8)); // Z
+        if (!readRegs(_addr, reg, buf, 6)) return false;
+        mag[0] = (int16_t)(buf[0] | (buf[1] << 8));
+        mag[1] = (int16_t)(buf[2] | (buf[3] << 8));
+        mag[2] = (int16_t)(buf[4] | (buf[5] << 8));
         return true;
       }
       return false;
@@ -477,6 +456,24 @@ static Mpu9250Driver _mpuDriver;
 static Gy271Driver _gy271Driver;
 
 static Mpu9250Compass mpu9250_compass;
+
+/*
+ * magMap -> heading axis pair. The heading is atan2(B, A), i.e. the angle of
+ * the (A, B) magnetic components. Some GY-271 chips (QMC5883P) have their axes
+ * rotated on the board, so the "horizontal" pair is chip-specific.
+ *   0: atan2(Y, X)   1: atan2(X, Y)   2: atan2(Z, X)
+ *   3: atan2(X, Z)   4: atan2(Z, Y)   5: atan2(Y, Z)
+ */
+static void magMapAxes(uint8_t map, uint8_t &a, uint8_t &b) {
+  switch (map) {
+    case 1: a = 1; b = 0; break; // atan2(X, Y)
+    case 2: a = 0; b = 2; break; // atan2(Z, X)
+    case 3: a = 2; b = 0; break; // atan2(X, Z)
+    case 4: a = 1; b = 2; break; // atan2(Z, Y)
+    case 5: a = 2; b = 1; break; // atan2(Y, Z)
+    default: a = 0; b = 1; break; // atan2(Y, X)
+  }
+}
 
 /*
  * Custom WLED effect: "Falling Sand".
@@ -555,12 +552,7 @@ static void mode_falling_sand() {
   if (d->lastAxis != axis) { d->lastAxis = axis; d->dir = 0; }
 
   if (H == 1) {
-    // ---------------- 1D: sand sheds one pixel at a time, accumulates on the other side ----------------
-    // The lit sand pile sheds pixels toward gravity; the low side accumulates
-    // them. Piles stay contiguous (no gaps). Several grains may be in flight
-    // at once - the Flow slider shortens the pause between releases so more
-    // grains are moving before the previous one lands, making the sand flow
-    // faster. Level to stop; reverse the tilt to drain it back.
+    // 1D: sand sheds toward gravity, accumulates on the opposite end
     uint16_t N = 2 + (SEGMENT.intensity * (W > 2 ? W - 2 : 1)) / 255;
     if (N > W) N = W;
     if (N < 1) N = 1;
@@ -637,10 +629,6 @@ static void mode_falling_sand() {
 
   // ---------------- 2D: falling sand that flips on full ----------------
   uint8_t *sand = tail;
-
-  // ---------------- 2D: falling sand that flips on full ----------------
-
-  // ---------------- 2D: falling sand that flips on full ----------------
   int8_t sx, sy;
   {
     float dirX = (axis == 2) ? 0.0f : gx;
@@ -957,10 +945,13 @@ void Mpu9250Compass::updateHeading() {
   constexpr float ACCEL_SCALE = 2.0f / 32767.0f; // +/-2 g full scale
 
   // tilt: gravity direction projected on the display plane (drives Falling Sand)
+  // accelerometer in g (available for the MPU/ICM core, not for a bare GY-271)
+  float ax = 0.0f, ay = 0.0f, az = 0.0f;
   if (_accelOK) {
-    float ax = (float)acc[0] * ACCEL_SCALE;
-    float ay = (float)acc[1] * ACCEL_SCALE;
-    float az = (float)acc[2] * ACCEL_SCALE;
+    ax = (float)acc[0] * ACCEL_SCALE;
+    ay = (float)acc[1] * ACCEL_SCALE;
+    az = (float)acc[2] * ACCEL_SCALE;
+
     // continuous raw gravity on the display plane (in g) - no dead zone,
     // lightly smoothed; drives the bubble level with maximum accuracy
     _rawGX = _rawGX * 0.6f + (-ax) * 0.4f;
@@ -987,31 +978,22 @@ void Mpu9250Compass::updateHeading() {
   float h;
   if (_sensorKind == 2) {
     // GY-271 magnetometer only: simple 2-axis heading, module must be level.
-    // magMap lets you select which axis pair forms the heading plane (some
-    // GY-271 chips - e.g. QMC5883P - have rotated axes on the board).
-    float v0 = (float)mag[0] - (float)magOffset[0];
-    float v1 = (float)mag[1] - (float)magOffset[1];
-    float v2 = (float)mag[2] - (float)magOffset[2];
+    // magMap selects which axis pair forms the heading plane (some GY-271
+    // chips - e.g. QMC5883P - have rotated axes on the board).
+    float v[3] = {
+      (float)mag[0] - (float)magOffset[0],
+      (float)mag[1] - (float)magOffset[1],
+      (float)mag[2] - (float)magOffset[2]
+    };
     if (useCalibration) {
-      v0 *= magScale[0];
-      v1 *= magScale[1];
-      v2 *= magScale[2];
+      v[0] *= magScale[0];
+      v[1] *= magScale[1];
+      v[2] *= magScale[2];
     }
-    switch (magMap) {
-      case 1: h = atan2f(v0, v1); break; // atan2(X, Y)
-      case 2: h = atan2f(v2, v0); break; // atan2(Z, X)
-      case 3: h = atan2f(v0, v2); break; // atan2(X, Z)
-      case 4: h = atan2f(v2, v1); break; // atan2(Z, Y)
-      case 5: h = atan2f(v1, v2); break; // atan2(Y, Z)
-      default: h = atan2f(v1, v0); break; // atan2(Y, X)
-    }
-    h = h * 180.0f / PI_F;
+    uint8_t a, b;
+    magMapAxes(magMap, a, b);
+    h = atan2f(v[b], v[a]) * 180.0f / PI_F;
   } else if (_magOK) {
-    // accelerometer in g
-    float ax = (float)acc[0] * ACCEL_SCALE;
-    float ay = (float)acc[1] * ACCEL_SCALE;
-    float az = (float)acc[2] * ACCEL_SCALE;
-
     // hard-iron offset (+ soft-iron scaling) corrected magnetometer
     float mx = (float)mag[0] - (float)magOffset[0];
     float my = (float)mag[1] - (float)magOffset[1];
@@ -1261,23 +1243,15 @@ void Mpu9250Compass::finishMagAuto() {
   for (uint8_t i = 0; i < 3; i++) if (magAutoRange[i] > mxr) mxr = magAutoRange[i];
   if (mxr < 100) { magAutoVert = -1; return; } // not enough rotation data
   magAutoVert = vert;
+  // the two remaining axes are the horizontal heading plane; find the magMap
+  // whose (A, B) pair matches them (heading = atan2(B, A))
   int a1 = -1, a2 = -1;
   for (uint8_t i = 0; i < 3; i++) if ((int)i != vert) { if (a1 < 0) a1 = i; else a2 = i; }
-  // map (A, B) -> magMap, heading = atan2(B, A)
-  uint8_t best = 0xFF;
   for (uint8_t m = 0; m < 6; m++) {
-    int A = -1, B = -1;
-    switch (m) {
-      case 0: A = 0; B = 1; break;
-      case 1: A = 1; B = 0; break;
-      case 2: A = 0; B = 2; break;
-      case 3: A = 2; B = 0; break;
-      case 4: A = 1; B = 2; break;
-      case 5: A = 2; B = 1; break;
-    }
-    if (A == a1 && B == a2) { best = m; break; }
+    uint8_t a, b;
+    magMapAxes(m, a, b);
+    if ((int)a == a1 && (int)b == a2) { magMap = m; break; }
   }
-  if (best != 0xFF) magMap = best;
 }
 
 void Mpu9250Compass::addToJsonInfo(JsonObject& root) {
