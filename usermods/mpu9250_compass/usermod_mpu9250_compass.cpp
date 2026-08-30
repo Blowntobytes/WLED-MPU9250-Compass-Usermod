@@ -796,8 +796,6 @@ const char* Mpu9250Compass::statusText() const {
 
 void Mpu9250Compass::setup() {
   initialized = true;
-  parseColor(northColorStr, _northColor);
-  parseColor(otherColorStr, _otherColor);
   // expose tilt data to WLED effects (drives the sensor-controlled PS 1D Balance)
   um_data = new um_data_t();
   um_data->u_size = 1;
@@ -931,8 +929,8 @@ void Mpu9250Compass::updateHeading() {
   if (h < 0.0f) h += 360.0f;
 
   // exponential moving average in sine/cosine space (handles 360 wraparound)
-  float alpha = (100.0f - (float)headingSmooth) / 100.0f;
-  if (alpha < 0.05f) alpha = 0.05f;
+  // the per-effect "Compass" smoothness slider provides the user control
+  float alpha = 0.35f;
   float hr = h * PI_F / 180.0f;
   _smoothCos = _smoothCos * (1.0f - alpha) + cosf(hr) * alpha;
   _smoothSin = _smoothSin * (1.0f - alpha) + sinf(hr) * alpha;
@@ -988,111 +986,16 @@ void Mpu9250Compass::resetCalibration() {
   for (uint8_t i = 0; i < 3; i++) { magOffset[i] = 0; magScale[i] = 1.0f; }
 }
 
-/* ------------------------------------------------------ colors & fx */
-
-void Mpu9250Compass::parseColor(const char *in, uint32_t &out) {
-  byte rgb[4] = {0, 0, 0, 0};
-  if (in && colorFromHexString(rgb, in)) {
-    out = RGBW32(rgb[0], rgb[1], rgb[2], 0);
-  } else {
-    out = RGBW32(255, 0, 0, 0);
-  }
-}
-
-uint32_t Mpu9250Compass::scaleColor(uint32_t c, uint8_t scale) {
-  return RGBW32(scale8(R(c), scale), scale8(G(c), scale),
-                scale8(B(c), scale), scale8(W(c), scale));
-}
-
-/*
- * Per-LED effect emulation. WLED's real effect engine works per segment,
- * not per LED, so this usermod emulates a small subset of the built-in
- * effect indices on top of the configured base color. Any other index
- * renders as solid.
- *
- *   0  Static (solid)             (FX_MODE_STATIC)
- *   1  Blink                      (FX_MODE_BLINK)
- *   2  Breath                     (FX_MODE_BREATH)
- *   8  Rainbow                    (FX_MODE_RAINBOW)
- *   9  Rainbow cycle              (FX_MODE_RAINBOW_CYCLE)
- *  17  Twinkle                    (FX_MODE_TWINKLE)
- */
-uint32_t Mpu9250Compass::applyEffect(uint32_t base, uint8_t effect,
-                                     uint16_t led, uint16_t total,
-                                     uint32_t now) {
-  switch (effect) {
-    case 1: { // Blink
-      return ((now / 400) & 1U) ? base : 0U;
-    }
-    case 2: { // Breath
-      int16_t s = (int16_t)sin8_t(uint8_t(now >> 4)) - 128;
-      int16_t b = 128 + 2 * s;
-      if (b < 0) b = 0; else if (b > 255) b = 255;
-      return scaleColor(base, (uint8_t)b);
-    }
-    case 8:   // Rainbow: hue distributed over the ring
-    case 9: { // Rainbow cycle: hue rotates with time
-      uint8_t hue = (effect == 8)
-        ? (uint8_t)((uint32_t)led * 255u / (total ? total : 1u))
-        : uint8_t(now >> 2);
-      uint8_t rgb[4] = {0, 0, 0, 0};
-      hsv2rgb_rainbow((uint16_t)hue << 8, 255, 255, rgb, false);
-      return RGBW32(rgb[0], rgb[1], rgb[2], 0);
-    }
-    case 17: { // Twinkle: random shimmer
-      return scaleColor(base, hw_random8(32, 256));
-    }
-    default:
-      return base;
-  }
-}
-
-/* ------------------------------------------------------ overlay draw */
-
-void Mpu9250Compass::handleOverlayDraw() {
-  if (!sensorEnabled || !overlayEnabled || !_magOK) return;
-
-  uint16_t ring = totalLeds;
-  uint16_t stripLen = strip.getLengthTotal();
-  if (ring == 0 || ring > stripLen) ring = stripLen;
-  if (ring == 0) return;
-
-  // LED whose angular position corresponds to the current heading
-  float step = 360.0f / (float)ring;
-  uint16_t northIdx = (uint16_t)(heading / step + 0.5f) % ring;
-
-  uint32_t now = millis();
-
-  for (uint16_t i = 0; i < ring; i++) {
-    int32_t d = (int32_t)i - (int32_t)northIdx;
-    if (d < 0) d = -d;
-    if (d > (int32_t)ring - d) d = (int32_t)ring - d;
-
-    bool isNorth = ((uint32_t)d * 2 <= (uint32_t)northSize);
-    uint32_t base = isNorth ? _northColor : _otherColor;
-    uint8_t  fx   = isNorth ? northEffect : otherEffect;
-
-    strip.setPixelColor(i, applyEffect(base, fx, i, ring, now));
-  }
-}
-
 /* ------------------------------------------------------ config */
 
 void Mpu9250Compass::addToConfig(JsonObject& root) {
   JsonObject top = root.createNestedObject(FPSTR(_name));
   top["sensorEnabled"] = sensorEnabled;
-  top["overlayEnabled"] = overlayEnabled;
   top["sdaPin"]  = sdaPin;
   top["sclPin"]  = sclPin;
   top["i2cAddress"] = i2cAddress;
   top["sensorType"] = sensorType;
   top["tiltAxis"] = tiltAxis;
-  top["totalLeds"]  = totalLeds;
-  top["northColor"] = northColorStr;
-  top["northEffect"] = northEffect;
-  top["northSize"]  = northSize;
-  top["otherColor"] = otherColorStr;
-  top["otherEffect"] = otherEffect;
   top["useCalibration"] = useCalibration;
   top["magOffsetX"] = magOffset[0];
   top["magOffsetY"] = magOffset[1];
@@ -1101,7 +1004,6 @@ void Mpu9250Compass::addToConfig(JsonObject& root) {
   top["magScaleY"]  = magScale[1];
   top["magScaleZ"]  = magScale[2];
   top["headingOffset"] = headingOffset;
-  top["headingSmooth"] = headingSmooth;
 }
 
 bool Mpu9250Compass::readFromConfig(JsonObject& root) {
@@ -1109,7 +1011,6 @@ bool Mpu9250Compass::readFromConfig(JsonObject& root) {
   bool complete = !top.isNull();
 
   complete &= getJsonValue(top["sensorEnabled"], sensorEnabled, true);
-  complete &= getJsonValue(top["overlayEnabled"], overlayEnabled, true);
   complete &= getJsonValue(top["sdaPin"],  sdaPin,  MPU9250_DEFAULT_SDA);
   complete &= getJsonValue(top["sclPin"],  sclPin,  MPU9250_DEFAULT_SCL);
   complete &= getJsonValue(top["i2cAddress"], i2cAddress, (uint8_t)0x68);
@@ -1117,10 +1018,6 @@ bool Mpu9250Compass::readFromConfig(JsonObject& root) {
   if (sensorType > 2) sensorType = 0;
   complete &= getJsonValue(top["tiltAxis"], tiltAxis, (uint8_t)0);
   if (tiltAxis > 2) tiltAxis = 0;
-  complete &= getJsonValue(top["totalLeds"],   totalLeds, (uint16_t)60);
-  complete &= getJsonValue(top["northEffect"], northEffect, (uint8_t)0);
-  complete &= getJsonValue(top["northSize"],   northSize,   (uint16_t)3);
-  complete &= getJsonValue(top["otherEffect"], otherEffect, (uint8_t)0);
   complete &= getJsonValue(top["useCalibration"], useCalibration, false);
   complete &= getJsonValue(top["magOffsetX"], magOffset[0], (int16_t)0);
   complete &= getJsonValue(top["magOffsetY"], magOffset[1], (int16_t)0);
@@ -1129,16 +1026,6 @@ bool Mpu9250Compass::readFromConfig(JsonObject& root) {
   complete &= getJsonValue(top["magScaleY"],  magScale[1],  1.0f);
   complete &= getJsonValue(top["magScaleZ"],  magScale[2],  1.0f);
   complete &= getJsonValue(top["headingOffset"], headingOffset, 0.0f);
-  complete &= getJsonValue(top["headingSmooth"], headingSmooth, (uint8_t)60);
-
-  if (top["northColor"].is<const char*>())
-    strncpy(northColorStr, top["northColor"].as<const char*>(), 7);
-  else
-    complete = false;
-  if (top["otherColor"].is<const char*>())
-    strncpy(otherColorStr, top["otherColor"].as<const char*>(), 7);
-  else
-    complete = false;
 
   return complete;
 }

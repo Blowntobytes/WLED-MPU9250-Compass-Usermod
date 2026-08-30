@@ -1,19 +1,20 @@
 # WLED MPU-9250 Compass Usermod
 
-Turn any WS2812 / NeoPixel strip or ring into a **magnetic compass** using an
-**MPU-9250 9-axis IMU** (gyroscope + accelerometer + magnetometer) on the I2C
-bus. Designed for **WLED 16.0.0**.
+Adds a magnetic compass plus tilt-driven lighting effects to WLED using an
+**MPU-9250** 9-axis IMU or a **GY-271** magnetometer on the I2C bus. Designed
+for **WLED 16.0.0**.
 
-The LEDs pointing towards **magnetic North** light up in one configurable
-color/effect, every other LED lights up in a different configurable
-color/effect, so you can see at a glance which way is North.
+The usermod registers several effects — most notably **"Compass"**, which shows
+which LEDs point towards **magnetic North** (Fx colour) while the rest of the
+strip shows the background (Bg colour), so you can see at a glance which way is
+North.
 
 ```
    ┌───────────────────────────────┐
    │        compass ring           │
-   │    .  .  .  N  .  .  .        │   N  = north-sector LEDs (northColor)
-   │    .                 .        │   .  = remaining LEDs   (otherColor)
-   │    .    MPU-9250     .        │
+   │    .  .  .  N  .  .  .        │   N  = north-sector LEDs (Fx)
+   │    .                 .        │   .  = remaining LEDs   (Bg)
+   │    .   MPU-9250      .        │
    │    .   (I2C)         .        │
    │    .                 .        │
    │    .  .  .  .  .  .  .        │
@@ -25,17 +26,15 @@ color/effect, so you can see at a glance which way is North.
 * **Tilt-compensated heading** computed from the magnetometer and
   accelerometer (pitch / roll / yaw), so the compass works even when the
   device is not perfectly level.
-* **North sector display**: a configurable number of LEDs around the heading
-  render in `northColor` + `northEffect`, the rest render in `otherColor` +
-  `otherEffect`.
+* **"Compass" effect**: a configurable North sector lights up in the **Fx**
+  colour, the rest of the strip in the **Bg** colour — with a north-size
+  slider and a smoothness slider.
 * **Two sensor options** (auto-detected or selected in settings):
   * **MPU-9250** 9-axis IMU — tilt-compensated heading, works even when not level.
-  * **GY-271** magnetometer breakout (HMC5883L or QMC5883L) — simple 2-axis heading, perfect for a flat-mounted compass.
+  * **GY-271** magnetometer breakout (HMC5883L, QMC5883L or QMC5883P/HP5883) — simple 2-axis heading, perfect for a flat-mounted compass.
 * **Full magnetometer calibration** built in: hard-iron offsets (bias) and
   soft-iron scaling (per-axis gain), either auto-computed with the on-device
   calibration routine or entered manually.
-* **Per-LED effect emulation**: solid, blink, breath, rainbow, rainbow cycle
-  and twinkle on either group of LEDs (see [Effects](#effects)).
 * **"Falling Sand" effect**: a new WLED effect (falling-sand simulation)
   whose gravity direction follows the sensor's tilt — works on both 1D strips
   and 2D matrices, and needs only the accelerometer (so it works on a plain
@@ -61,16 +60,17 @@ color/effect, so you can see at a glance which way is North.
   to derive roll/pitch; the raw magnetic field is then projected onto the
   horizontal plane (**tilt compensation**), so the heading stays correct even
   when the device isn't level.
-* **GY-271 mode**: a bare magnetometer (HMC5883L at `0x1E` or QMC5883L at
-  `0x0D`) gives the classic 2-axis heading `atan2(my, mx)`. There is no
-  accelerometer, so the module must be held (or mounted) **level** for an
-  accurate heading.
-* The heading (0–360°) is mapped onto the ring: LED `n` covers the angular
-  range `n * 360 / totalLeds` … `(n+1) * 360 / totalLeds` degrees, and the
-  `northSize` LEDs centred on the heading are the "North sector".
+* **GY-271 mode**: a bare magnetometer (HMC5883L at `0x1E`, QMC5883L at
+  `0x0D` or QMC5883P at `0x2C`) gives the classic 2-axis heading
+  `atan2(my, mx)`. There is no accelerometer, so the module must be held (or
+  mounted) **level** for an accurate heading.
+* The heading (0–360°) is mapped onto the ring: in the **Compass** effect, LED
+  `n` covers the angular range `n * 360 / W` … `(n+1) * 360 / W` degrees
+  (where `W` is the segment length), and the LEDs centred on the heading are
+  the "North sector".
 * The heading is low-pass filtered (EMA in sine/cosine space) to remove
   sensor noise without jump artefacts at the 360°/0° boundary.
-* The compass is re-read and re-rendered at ~20 Hz.
+* The compass is re-read at ~20 Hz.
 
 ### Axis convention
 
@@ -121,10 +121,6 @@ strip/matrix), so any of WLED's built-in or custom palettes can be used. The
 **secondary color** is the background. A directional dead-zone keeps the sand
 steady (no flicker) while the device is level.
 
-> If you have a magnetometer and the compass overlay is also enabled
-> (`overlayEnabled`), the compass will paint over the sand — set
-> `overlayEnabled = false` to show only the Falling Sand effect.
-
 ### Compass effect
 
 The usermod registers a **"Compass"** effect that shows **magnetic north** on
@@ -142,10 +138,6 @@ Select it as the effect for your segment and use its sliders:
 Colours come from the colour picker screen: the **Fx** slot colours the north
 sector and the **Bg** slot colours the background. Use `headingOffset` in the
 usermod settings to align the ring/sensor (and magnetic declination).
-
-> If you have a magnetometer and the compass overlay is also enabled
-> (`overlayEnabled`), the overlay will paint over this effect — set
-> `overlayEnabled = false` to use the Compass effect on its own.
 
 ### Bubble Level effect
 
@@ -188,7 +180,8 @@ of LEDs: on a 16-LED strip each LED is roughly 6% of the travel.)
   I2C address (`0x68` / `0x69`) is configurable too; the GY-271 is
   auto-detected at `0x1E` (HMC5883L), `0x0D` (QMC5883L) or `0x2C`
   (QMC5883P / "HP5883" — the newest GY-271 chip).
-* The ring's first `totalLeds` LEDs (starting at LED 0) form the compass.
+* The compass/tilt effects act on the segment they are applied to (they do
+  not paint over other effects).
 
 > **DRDY pin**: the GY-271's DRDY (data-ready) pin is an optional interrupt
 > and is **not required** — this usermod reads the sensor directly over I2C.
@@ -256,38 +249,15 @@ editable on **Config → Usermod** in the WLED web UI.
 | Key                | Type    | Default        | Description |
 |--------------------|---------|----------------|-------------|
 | `sensorEnabled`    | bool    | `true`         | Master switch for the usermod. |
-| `overlayEnabled`   | bool    | `true`         | Compass LED overlay on/off (needs a magnetometer). Turn off to let the Hourglass (tilt) effect show unobstructed. |
 | `sdaPin`           | int     | `21` (ESP32)   | I2C SDA pin. |
 | `sclPin`           | int     | `22` (ESP32)   | I2C SCL pin. |
 | `i2cAddress`       | int     | `104` (0x68)   | MPU-9250 I2C address; `104` = 0x68, `105` = 0x69. |
-| `sensorType`       | int     | `0`            | `0` = auto-detect, `1` = MPU-9250 only, `2` = GY-271 (HMC5883L/QMC5883L) only. |
-| `tiltAxis`         | int     | `0`            | Falling Sand tilt axis: `0` = both, `1` = left/right only, `2` = forward/back only. |
-| `totalLeds`        | int     | `60`           | Number of LEDs that form the compass ring (LEDs 0…totalLeds-1). |
-| `northColor`       | string  | `"FF0000"`     | Color (hex `RRGGBB`) of the North-sector LEDs. |
-| `northEffect`      | int     | `0`            | Effect index for the North-sector LEDs (0 = solid), see [Effects](#effects). |
-| `northSize`        | int     | `3`            | Number of LEDs in the North sector (1 LED ≈ 360/totalLeds degrees). |
-| `otherColor`       | string  | `"0022FF"`     | Color (hex `RRGGBB`) of the remaining LEDs. |
-| `otherEffect`      | int     | `0`            | Effect index for the remaining LEDs (0 = solid). |
+| `sensorType`       | int     | `0`            | `0` = auto-detect, `1` = MPU-9250 only, `2` = GY-271 only. |
+| `tiltAxis`         | int     | `0`            | Tilt effects tilt axis: `0` = both, `1` = left/right only, `2` = forward/back only. |
 | `useCalibration`   | bool    | `false`        | Apply the hard-iron/soft-iron magnetometer correction. |
 | `magOffsetX/Y/Z`   | int     | `0`            | Hard-iron bias per axis (raw magnetometer counts). |
 | `magScaleX/Y/Z`    | float   | `1.0`          | Soft-iron scale per axis. |
 | `headingOffset`    | float   | `0`            | Manual heading correction in degrees (also used for declination). |
-| `headingSmooth`    | int     | `60`           | Heading smoothing 0 (none)…100 (heavy). |
-
-### Effects
-
-WLED's effect engine works per *segment*, not per LED, so this usermod
-emulates a small subset of the built-in effect indices on top of the base
-color. Unknown indices render as solid.
-
-| Index | Name          | Behaviour                              |
-|-------|---------------|----------------------------------------|
-| 0     | Static        | Solid color                            |
-| 1     | Blink         | On/off at ~1.25 Hz                     |
-| 2     | Breath        | Sinusoidal brightness                 |
-| 8     | Rainbow       | Hue distributed across the ring       |
-| 9     | Rainbow cycle | Hue rotates over time                  |
-| 17    | Twinkle       | Random shimmer                         |
 
 ## Calibration
 
@@ -409,35 +379,29 @@ roll.
 
 ### 60-LED ring compass
 
-```ini
-totalLeds   = 60
-northColor  = FF0000
-northEffect = 0
-northSize   = 5        ; ~30° wide sector
-otherColor  = 000022
-otherEffect = 0
+Apply the **Compass** effect to the segment, then in the effect controls:
+
+```
+North size = 5        ; ~30° wide sector (effect intensity)
+Fx colour  = FF0000   ; north sector
+Bg colour  = 000022   ; background
+Smoothness = high     ; effect speed (higher = steadier)
 ```
 
-### 24-LED ring, blinking north sector
+### 24-LED ring, brighter north sector
 
-```ini
-totalLeds   = 24
-northColor  = FFFF00
-northEffect = 1        ; blink
-northSize   = 3
-otherColor  = 220000
-otherEffect = 0
+```
+North size = 3
+Fx colour  = FFFF00
+Bg colour  = 220000
 ```
 
-### Rainbow background, rotating north marker
+### Single-pixel north "hand" on a large ring
 
-```ini
-totalLeds   = 120
-northColor  = FFFFFF
-northEffect = 9        ; rainbow cycle
-northSize   = 1        ; single "hand"
-otherColor  = FF00FF
-otherEffect = 8        ; rainbow
+```
+North size = 1
+Fx colour  = FFFFFF
+Bg colour  = FF00FF
 ```
 
 ### Correcting mounting & magnetic declination
@@ -459,12 +423,12 @@ otherEffect = 8        ; rainbow
 | Info page shows "sensor offline"     | Check `MPU9250Compass.i2cScan` in `/json/state`: if nothing responds, fix wiring/pins/pull-ups/power; if the sensor answers but `magWhoAmI` is 0, the magnetometer is missing (see below). |
 | Nothing on the I2C scan              | Wrong SDA/SCL pins, missing pull-up resistors, no power, or address mismatch. Double-check AD0 (0x68 = GND, 0x69 = 3.3V). |
 | ESP32-C3: sensor offline on GPIO 8/9 | Many ESP32-C3 boards use **GPIO8 for the onboard RGB LED** and **GPIO9 for the BOOT button** (e.g. DevKitM-1). Use other pins, e.g. GPIO4/5 or GPIO6/7. |
-| Sensor answers but `magWhoAmI` = 0   | Many cheap "MPU-9250" modules are actually **MPU-6500** chips (WHO_AM_I = 0x70) with no magnetometer — a compass can't work without it. The usermod probes both the I2C bypass and the internal I2C master path before concluding this. **The accelerometer still works**, so the "Hourglass (tilt)" effect functions normally; only the compass is unavailable. |
-| GY-271 mode: sensor offline          | Check the scan shows `30` (0x1E, HMC5883L) or `13` (0x0D, QMC5883L). If nothing: wiring/pins/power. If `magType` is 0 but the address appears, try `sensorType = 2` to skip MPU detection. |
+| Sensor answers but `magWhoAmI` = 0   | Many cheap "MPU-9250" modules are actually **MPU-6500** chips (WHO_AM_I = 0x70) with no magnetometer — a compass can't work without it. The usermod probes both the I2C bypass and the internal I2C master path before concluding this. **The accelerometer still works**, so the tilt effects (Falling Sand, Bubble Level) function normally; only the compass is unavailable. |
+| GY-271 mode: sensor offline          | Check the scan shows `30` (0x1E, HMC5883L), `13` (0x0D, QMC5883L) or `44` (0x2C, QMC5883P/HP5883). If nothing: wiring/pins/power. If `magType` is 0 but the address appears, try `sensorType = 2` to skip MPU detection. |
 | GY-271 heading wrong when tilted     | Expected: a magnetometer-only module can't measure tilt. Mount the GY-271 **level** (the MPU-9250 mode provides tilt compensation instead). |
 | Heading is constant/wrong            | Run the calibration; check `useCalibration`; check `headingOffset` and the +X axis convention. |
-| Heading jitters                      | Increase `headingSmooth` (up to 100). |
-| North sector seems misaligned        | One LED = 360/`totalLeds` degrees; set `northSize` accordingly and use `headingOffset` to align. |
+| Compass effect: north jumps / jitters| Increase the **Compass** effect's Smoothness slider (effect speed). |
+| Compass effect: north sector misaligned | One LED = 360/segment-length degrees; adjust the effect's North size and use `headingOffset` to align. |
 | Pin/address change has no effect     | Reboot after changing `sdaPin`/`sclPin`/`i2cAddress` (changes are applied automatically on the next loop as well). |
 
 ## Files
