@@ -41,6 +41,29 @@ constexpr uint8_t AK_CNTL1 = 0x0A;
 constexpr uint8_t AK_CNTL2 = 0x0B;
 constexpr uint8_t AK_ASAX  = 0x10;
 
+// ICM-20948 register map (USER BANK 0) - same family as the MPU-6500 but the
+// WHO_AM_I lives at 0x00 (0xEA) and several addresses differ.
+constexpr uint8_t ICM_WHO_AM_I      = 0x00; // 0xEA
+constexpr uint8_t ICM_USER_CTRL     = 0x03;
+constexpr uint8_t ICM_PWR_MGMT_1    = 0x06;
+constexpr uint8_t ICM_PWR_MGMT_2    = 0x07;
+constexpr uint8_t ICM_INT_PIN_CFG   = 0x0F;
+constexpr uint8_t ICM_ACCEL_CONFIG  = 0x14;
+constexpr uint8_t ICM_ACCEL_XOUT_H  = 0x2D;
+constexpr uint8_t ICM_GYRO_XOUT_H   = 0x33;
+constexpr uint8_t ICM_EXT_SENS_DATA_00 = 0x3B;
+constexpr uint8_t ICM_BANK_SEL      = 0x7F;
+
+// AK09916 magnetometer register map (ICM-20948's embedded compass)
+constexpr uint8_t AK16_I2C_ADDR = 0x0C;
+constexpr uint8_t AK16_WIA1  = 0x00; // 0x48 (AKM company ID)
+constexpr uint8_t AK16_WIA2  = 0x01; // 0x09 (AK09916 device ID)
+constexpr uint8_t AK16_ST1   = 0x10; // bit0 = DRDY
+constexpr uint8_t AK16_HXL   = 0x11; // X LSB, X MSB, Y LSB, Y MSB, Z LSB, Z MSB
+constexpr uint8_t AK16_ST2   = 0x18; // bit3 = HOFL (sensor overflow)
+constexpr uint8_t AK16_CNTL2 = 0x31; // MODE[4:0] bits 3:0, 0x08 = continuous 100 Hz
+constexpr uint8_t AK16_CNTL3 = 0x32; // bit0 = SRST (soft reset)
+
 // MPU-6500 I2C master interface (alternative path to the magnetometer)
 constexpr uint8_t I2C_MST_CTRL   = 0x24;
 constexpr uint8_t I2C_SLV0_ADDR  = 0x25;
@@ -83,16 +106,28 @@ class Mpu9250Driver {
 
   private:
     uint8_t _addr = 0x68;
+    bool    _isICM = false;   // ICM-20948 (banked register map) instead of MPU-6500
     float   _magSens[3] = {1.0f, 1.0f, 1.0f};
-    uint8_t _whoAmI = 0;      // MPU-6500 WHO_AM_I as read from the chip
-    uint8_t _magWhoAmI = 0;   // AK8963 WIA as read from the chip
+    uint8_t _whoAmI = 0;      // MPU-6500 / ICM-20948 WHO_AM_I as read from the chip
+    uint8_t _magWhoAmI = 0;   // magnetometer WIA as read from the chip (AK8963/AK09916)
     MagPath _magPath = MAG_NONE;
 
-    // ---- magnetometer via I2C bypass: AK8963 is directly on the bus at 0x0C ----
+    // ---- magnetometer via I2C bypass: it is directly on the bus at 0x0C ----
     bool initMagBypass() {
       using namespace mpu9250;
       uint8_t wia = 0;
       _magWhoAmI = 0;
+      if (_isICM) {
+        // AK09916 (embedded in the ICM-20948): WIA1 = 0x48, WIA2 = 0x09
+        if (!readReg(AK16_I2C_ADDR, AK16_WIA1, wia) || wia != 0x48) return false;
+        _magWhoAmI = wia;
+        writeReg(AK16_I2C_ADDR, AK16_CNTL3, 0x01); // soft reset
+        delay(10);
+        writeReg(AK16_I2C_ADDR, AK16_CNTL2, 0x08); // continuous, 100 Hz
+        delay(20);
+        _magPath = MAG_BYPASS;
+        return true;
+      }
       if (!readReg(AK8963_I2C_ADDR, AK_WIA, wia)) return false;
       _magWhoAmI = wia;
       if (wia != 0x48) return false;
@@ -184,6 +219,7 @@ class Mpu9250Driver {
     uint8_t magWhoAmI() const { return _magWhoAmI; }
     MagPath magPath() const   { return _magPath; }
     bool magAvailable() const { return _magPath != MAG_NONE; }
+    bool isICM() const        { return _isICM; }
 
     bool begin(uint8_t addr, int sda, int scl) {
       using namespace mpu9250;
@@ -194,34 +230,70 @@ class Mpu9250Driver {
       _whoAmI = 0;
       _magWhoAmI = 0;
       _magPath = MAG_NONE;
+      _isICM = false;
       uint8_t who = 0;
-      if (!readReg(_addr, REG_WHO_AM_I, who)) return false;
+      // ICM-20948 keeps its WHO_AM_I at 0x00 (0xEA), the MPU-6500 at 0x75.
+      // Read both: an ICM-20948 may not respond to 0x75 and vice versa.
+      if (!readReg(_addr, REG_WHO_AM_I, who)) who = 0;
       _whoAmI = who;
-      // genuine MPU-9250 = 0x71; tolerate common clones (0x70/0x68)
-      if (who != 0x71 && who != 0x70 && who != 0x68) return false;
+      if (who == 0x71 || who == 0x70 || who == 0x68) {
+        _isICM = false;
+      } else {
+        uint8_t whoICM = 0;
+        if (!readReg(_addr, ICM_WHO_AM_I, whoICM)) whoICM = 0;
+        if (whoICM == 0xEA) {
+          _whoAmI = whoICM;
+          _isICM = true;
+        } else {
+          // neither chip answered with a known ID
+          _whoAmI = who ? who : whoICM;
+          return false;
+        }
+      }
       // reset the device
-      writeReg(_addr, REG_PWR_MGMT_1, 0x80);
+      uint8_t regPwr1  = _isICM ? ICM_PWR_MGMT_1  : REG_PWR_MGMT_1;
+      uint8_t regPwr2  = _isICM ? ICM_PWR_MGMT_2  : REG_PWR_MGMT_2;
+      uint8_t regUc    = _isICM ? ICM_USER_CTRL   : REG_USER_CTRL;
+      uint8_t regIpcfg = _isICM ? ICM_INT_PIN_CFG : REG_INT_PIN_CFG;
+      writeReg(_addr, regPwr1, 0x80);
       delay(100);
       // clock source = PLL with X-axis gyroscope, wake up all sensors
-      writeReg(_addr, REG_PWR_MGMT_1, 0x01);
-      writeReg(_addr, REG_PWR_MGMT_2, 0x00);
-      // sample rate 1 kHz / (1 + 4) = 200 Hz, DLPF 44 Hz
-      writeReg(_addr, REG_SMPLRT_DIV, 0x04);
-      writeReg(_addr, REG_CONFIG, 0x03);
-      writeReg(_addr, REG_GYRO_CONFIG, 0x08);   // +/-500 dps
-      writeReg(_addr, REG_ACCEL_CONFIG, 0x00);  // +/-2 g
+      writeReg(_addr, regPwr1, 0x01);
+      writeReg(_addr, regPwr2, 0x00);
+      if (_isICM) {
+        // ICM-20948: accel range +/-2g (register 0x14, bank 0)
+        writeReg(_addr, ICM_ACCEL_CONFIG, 0x00);
+      } else {
+        // sample rate 1 kHz / (1 + 4) = 200 Hz, DLPF 44 Hz
+        writeReg(_addr, REG_SMPLRT_DIV, 0x04);
+        writeReg(_addr, REG_CONFIG, 0x03);
+        writeReg(_addr, REG_GYRO_CONFIG, 0x08);   // +/-500 dps
+        writeReg(_addr, REG_ACCEL_CONFIG, 0x00);  // +/-2 g
+      }
       // magnetometer (optional - some boards are MPU-6500 without one):
       // try I2C bypass first, then the internal I2C master
-      writeReg(_addr, REG_USER_CTRL, 0x00);     // master off while in bypass
-      writeReg(_addr, REG_INT_PIN_CFG, 0x02);   // I2C bypass enable
+      writeReg(_addr, regUc, 0x00);     // master off while in bypass
+      writeReg(_addr, regIpcfg, 0x02);  // I2C bypass enable
       if (initMagBypass()) return true;
-      if (initMagMaster()) return true;
+      if (!_isICM && initMagMaster()) return true;
       // no magnetometer: the accelerometer/gyroscope still work (tilt effects)
       return true;
     }
 
     bool readAccelGyro(int16_t *acc, int16_t *gyr) {
       using namespace mpu9250;
+      if (_isICM) {
+        // ICM-20948: ACCEL_XOUT_H(0x2D)..GYRO_ZOUT_L(0x38), 12 bytes, no temp gap
+        uint8_t buf[12];
+        if (!readRegs(_addr, ICM_ACCEL_XOUT_H, buf, 12)) return false;
+        acc[0] = (int16_t)((buf[0] << 8) | buf[1]);
+        acc[1] = (int16_t)((buf[2] << 8) | buf[3]);
+        acc[2] = (int16_t)((buf[4] << 8) | buf[5]);
+        gyr[0] = (int16_t)((buf[6]  << 8) | buf[7]);
+        gyr[1] = (int16_t)((buf[8]  << 8) | buf[9]);
+        gyr[2] = (int16_t)((buf[10] << 8) | buf[11]);
+        return true;
+      }
       uint8_t buf[14];
       if (!readRegs(_addr, REG_ACCEL_XOUT_H, buf, 14)) return false;
       acc[0] = (int16_t)((buf[0] << 8) | buf[1]);
@@ -242,6 +314,25 @@ class Mpu9250Driver {
     bool readMag(int16_t *mag) {
       using namespace mpu9250;
       if (_magPath == MAG_BYPASS) {
+        if (_isICM) {
+          // AK09916: wait for DRDY, then read 6 bytes of X/Y/Z little-endian
+          uint8_t st1 = 0;
+          uint32_t start = millis();
+          do {
+            if (!readReg(AK16_I2C_ADDR, AK16_ST1, st1)) return false;
+            if (st1 & 0x01) break; // data ready
+          } while (millis() - start < 20);
+          if (!(st1 & 0x01)) return false;
+          uint8_t buf[6];
+          if (!readRegs(AK16_I2C_ADDR, AK16_HXL, buf, 6)) return false;
+          mag[0] = (int16_t)((buf[1] << 8) | buf[0]);
+          mag[1] = (int16_t)((buf[3] << 8) | buf[2]);
+          mag[2] = (int16_t)((buf[5] << 8) | buf[4]);
+          uint8_t st2 = 0;
+          readReg(AK16_I2C_ADDR, AK16_ST2, st2); // ST2 read clears DRDY
+          if (st2 & 0x08) return false; // magnetic sensor overflow (HOFL)
+          return true;
+        }
         uint8_t st1 = 0;
         uint32_t start = millis();
         do {
@@ -751,10 +842,12 @@ void Mpu9250Compass::initSensor() {
   _magOK = false;
   sensorAvailable = false;
   whoAmI = 0; magWhoAmI = 0; magPath = 0; magType = 0;
+  _mpuIsICM = false;
 
   if (sensorEnabled) {
     if (sensorType != 2 && _mpuDriver.begin(i2cAddress, sdaPin, sclPin)) {
       _sensorKind = 1; // MPU core works (accelerometer usable for tilt)
+      _mpuIsICM  = _mpuDriver.isICM(); // ICM-20948 (0xEA) vs MPU-6500/9250
       _accelOK = true;
       _magOK = _mpuDriver.magAvailable(); // magnetometer is optional
       sensorAvailable = true;
@@ -769,7 +862,8 @@ void Mpu9250Compass::initSensor() {
   magWhoAmI = _mpuDriver.magWhoAmI();
   magPath   = (uint8_t)_mpuDriver.magPath();
   magType   = (_sensorKind == 2) ? (uint8_t)_gy271Driver.magType()
-                                 : (_magOK ? 1 : 0);
+                                 : (_magOK ? (_mpuIsICM ? 5 : 1) : 0);
+  // magType: 0=none, 1=AK8963 (MPU-9250), 5=AK09916 (ICM-20948)
   scanI2CBus();
   readErrors = 0;
   if (sensorAvailable) lastSample = 0;
@@ -789,10 +883,10 @@ const char* Mpu9250Compass::statusText() const {
   if (sensorType == 2)
     return "GY-271 magnetometer not found - check wiring and pins (HMC5883L at 0x1E / QMC5883L at 0x0D)";
   if (_accelOK)
-    return "MPU accelerometer OK - no magnetometer (compass unavailable, tilt effects work)";
+    return "MPU/ICM accelerometer OK - no magnetometer (compass unavailable, tilt effects work)";
   if (whoAmI == 0)
-    return "no MPU-9250 and no GY-271 magnetometer found - check wiring, pins and power";
-  return "magnetometer not found (checked I2C bypass and I2C master) - this module appears to be an MPU-6500 without a compass";
+    return "no MPU-9250/ICM-20948 and no GY-271 magnetometer found - check wiring, pins and power";
+  return "magnetometer not found (checked I2C bypass) - this module appears to be an MPU-6500/ICM without a compass";
 }
 
 void Mpu9250Compass::setup() {
@@ -1085,11 +1179,11 @@ void Mpu9250Compass::addToJsonState(JsonObject& obj) {
   top["magAvailable"]   = _magOK;
   // diagnostics are reported even when the sensor is offline, so you can see
   // exactly what the I2C bus responds with
-  top["whoAmI"]    = whoAmI;    // 0x71 genuine MPU-9250, 0x70/0x68 clones, 0 = no reply
-  top["magWhoAmI"] = magWhoAmI; // 0x48 genuine AK8963 magnetometer, 0 = not found
+  top["whoAmI"]    = whoAmI;    // 0x71 MPU-9250, 0x70/0x68 clones, 0xEA ICM-20948, 0 = no reply
+  top["magWhoAmI"] = magWhoAmI; // 0x48 AK8963, AK09916 WIA1 (also 0x48), 0 = not found
   top["magPath"]   = magPath;   // MPU mag access: 0=none, 1=I2C bypass, 2=I2C master
-  top["magType"]   = magType;   // 0=none, 1=AK8963, 2=HMC5883L, 3=QMC5883L
-  top["sensorKind"] = _sensorKind; // 0=none, 1=MPU-9250, 2=GY-271
+  top["magType"]   = magType;   // 0=none, 1=AK8963, 2=HMC5883L, 3=QMC5883L, 4=QMC5883P, 5=AK09916
+  top["sensorKind"] = _sensorKind; // 0=none, 1=MPU-9250/ICM-20948, 2=GY-271
   top["tiltAxis"]   = tiltAxis;    // Falling Sand tilt axis: 0=both, 1=left/right, 2=forward/back
   top["magMap"]     = magMap;      // GY-271 heading axis pair
   top["magAuto"]    = magAuto;     // true while auto-detect is collecting rotation data

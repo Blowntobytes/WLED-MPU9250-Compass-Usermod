@@ -102,10 +102,11 @@ class Mpu9250Compass : public Usermod {
     int8_t   magAutoVert = -1;             // axis with the least swing (-1 = not run / no rotation)
 
     // ---- diagnostics ----
-    uint8_t  whoAmI    = 0;      // MPU-6500 WHO_AM_I value (0x71 genuine MPU-9250, 0x70/0x68 clones, 0 = no reply)
-    uint8_t  magWhoAmI = 0;      // AK8963 WIA value (0x48 genuine magnetometer, 0 = not found)
-    uint8_t  magPath   = 0;      // MPU magnetometer access: 0=none, 1=I2C bypass, 2=I2C master
-    uint8_t  magType   = 0;      // magnetometer type: 0=none, 1=AK8963, 2=HMC5883L, 3=QMC5883L
+    uint8_t  whoAmI    = 0;      // MPU-6500 WHO_AM_I (0x71 MPU-9250, 0x70/0x68 clones) or ICM-20948 (0xEA); 0 = no reply
+    uint8_t  magWhoAmI = 0;      // magnetometer WIA (0x48 AK8963, AK09916 WIA1 also 0x48); 0 = not found
+    uint8_t  magPath   = 0;      // MPU mag access: 0=none, 1=I2C bypass, 2=I2C master
+    uint8_t  magType   = 0;      // magnetometer type: 0=none, 1=AK8963, 2=HMC5883L, 3=QMC5883L, 4=QMC5883P
+    bool     _mpuIsICM = false;  // MPU core is an ICM-20948 (AK09916 magnetometer)
     uint8_t  scanResults[117] = {};
     uint8_t  scanCount = 0;      // number of I2C addresses that answered the bus scan
 
@@ -131,6 +132,10 @@ class Mpu9250Compass : public Usermod {
     void addToJsonInfo(JsonObject& obj) override;
     uint16_t getId() override { return USERMOD_ID_MPU9250_COMPASS; }
     bool getUMData(um_data_t **data) override;
+
+    // MPU-6500/MPU-9250/ICM-20948 core info (the ICM-20948 is a register-compatible
+    // successor with an embedded AK09916 magnetometer)
+    inline bool mpuIsICM() const { return _mpuIsICM; }
 
     // tilt data used by the registered "Falling Sand" effect
     // (gx, gy) = unit vector of gravity projected on the display plane
