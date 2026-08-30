@@ -54,6 +54,7 @@ class Mpu9250Compass : public Usermod {
     uint8_t  i2cAddress      = 0x68;
     uint8_t  sensorType      = 0;       // 0 = auto, 1 = MPU-9250, 2 = GY-271 (HMC5883L/QMC5883L)
     uint8_t  tiltAxis        = 0;       // tilt effects: 0 = both, 1 = left/right only, 2 = forward/back only
+    uint8_t  magMap          = 0;       // GY-271 heading axis pair: 0=XY 1=YX 2=ZX 3=XZ 4=ZY 5=YZ
     bool     useCalibration  = false;   // apply hard/soft iron correction
     int16_t  magOffset[3]    = {0, 0, 0};
     float    magScale[3]     = {1.0f, 1.0f, 1.0f};

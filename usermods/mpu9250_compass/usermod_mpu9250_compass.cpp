@@ -885,14 +885,26 @@ void Mpu9250Compass::updateHeading() {
 
   float h;
   if (_sensorKind == 2) {
-    // GY-271 magnetometer only: simple 2-axis heading, module must be level
-    float mx = (float)mag[0] - (float)magOffset[0];
-    float my = (float)mag[1] - (float)magOffset[1];
+    // GY-271 magnetometer only: simple 2-axis heading, module must be level.
+    // magMap lets you select which axis pair forms the heading plane (some
+    // GY-271 chips - e.g. QMC5883P - have rotated axes on the board).
+    float v0 = (float)mag[0] - (float)magOffset[0];
+    float v1 = (float)mag[1] - (float)magOffset[1];
+    float v2 = (float)mag[2] - (float)magOffset[2];
     if (useCalibration) {
-      mx *= magScale[0];
-      my *= magScale[1];
+      v0 *= magScale[0];
+      v1 *= magScale[1];
+      v2 *= magScale[2];
     }
-    h = atan2f(my, mx) * 180.0f / PI_F;
+    switch (magMap) {
+      case 1: h = atan2f(v0, v1); break; // atan2(X, Y)
+      case 2: h = atan2f(v2, v0); break; // atan2(Z, X)
+      case 3: h = atan2f(v0, v2); break; // atan2(X, Z)
+      case 4: h = atan2f(v2, v1); break; // atan2(Z, Y)
+      case 5: h = atan2f(v1, v2); break; // atan2(Y, Z)
+      default: h = atan2f(v1, v0); break; // atan2(Y, X)
+    }
+    h = h * 180.0f / PI_F;
   } else if (_magOK) {
     // accelerometer in g
     float ax = (float)acc[0] * ACCEL_SCALE;
@@ -997,6 +1009,7 @@ void Mpu9250Compass::addToConfig(JsonObject& root) {
   top["i2cAddress"] = i2cAddress;
   top["sensorType"] = sensorType;
   top["tiltAxis"] = tiltAxis;
+  top["magMap"] = magMap;
   top["useCalibration"] = useCalibration;
   top["magOffsetX"] = magOffset[0];
   top["magOffsetY"] = magOffset[1];
@@ -1019,6 +1032,8 @@ bool Mpu9250Compass::readFromConfig(JsonObject& root) {
   if (sensorType > 2) sensorType = 0;
   complete &= getJsonValue(top["tiltAxis"], tiltAxis, (uint8_t)0);
   if (tiltAxis > 2) tiltAxis = 0;
+  complete &= getJsonValue(top["magMap"], magMap, (uint8_t)0);
+  if (magMap > 5) magMap = 0;
   complete &= getJsonValue(top["useCalibration"], useCalibration, false);
   complete &= getJsonValue(top["magOffsetX"], magOffset[0], (int16_t)0);
   complete &= getJsonValue(top["magOffsetY"], magOffset[1], (int16_t)0);
@@ -1048,6 +1063,7 @@ void Mpu9250Compass::addToJsonState(JsonObject& obj) {
   top["magType"]   = magType;   // 0=none, 1=AK8963, 2=HMC5883L, 3=QMC5883L
   top["sensorKind"] = _sensorKind; // 0=none, 1=MPU-9250, 2=GY-271
   top["tiltAxis"]   = tiltAxis;    // Falling Sand tilt axis: 0=both, 1=left/right, 2=forward/back
+  top["magMap"]     = magMap;      // GY-271 heading axis pair
   top["tiltX"]      = _gx;         // gravity on display X (-1..1)
   top["tiltY"]      = _gy;         // gravity on display Y (-1..1)
   JsonArray scan = top.createNestedArray("i2cScan");
