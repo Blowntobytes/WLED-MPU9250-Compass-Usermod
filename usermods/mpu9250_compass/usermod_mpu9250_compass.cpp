@@ -1072,6 +1072,9 @@ void Mpu9250Compass::addToJsonState(JsonObject& obj) {
   top["tiltAxis"]   = tiltAxis;    // Falling Sand tilt axis: 0=both, 1=left/right, 2=forward/back
   top["magMap"]     = magMap;      // GY-271 heading axis pair
   top["magAuto"]    = magAuto;     // true while auto-detect is collecting rotation data
+  top["magAutoVert"] = magAutoVert; // axis with the least swing (0=X,1=Y,2=Z, -1 = no rotation captured)
+  JsonArray mar = top.createNestedArray("magAutoRange");
+  mar.add(magAutoRange[0]); mar.add(magAutoRange[1]); mar.add(magAutoRange[2]);
   top["tiltX"]      = _gx;         // gravity on display X (-1..1)
   top["tiltY"]      = _gy;         // gravity on display Y (-1..1)
   JsonArray scan = top.createNestedArray("i2cScan");
@@ -1130,14 +1133,19 @@ void Mpu9250Compass::startMagAuto() {
 void Mpu9250Compass::finishMagAuto() {
   if (!magAuto) return;
   magAuto = false;
+  magAutoVert = -1;
   if (!_magOK) return;
-  // the axis with the smallest range is the one aligned with the rotation axis
+  for (uint8_t i = 0; i < 3; i++) magAutoRange[i] = magMax[i] - magMin[i];
+  // the axis with the smallest swing is aligned with the rotation axis
   // (vertical when held level); the other two are the horizontal heading plane
-  int32_t range[3];
-  for (uint8_t i = 0; i < 3; i++) range[i] = magMax[i] - magMin[i];
   int vert = 0;
-  if (range[1] < range[vert]) vert = 1;
-  if (range[2] < range[vert]) vert = 2;
+  if (magAutoRange[1] < magAutoRange[vert]) vert = 1;
+  if (magAutoRange[2] < magAutoRange[vert]) vert = 2;
+  // sanity check: if no axis swung much, no real rotation was captured
+  int32_t mxr = 0;
+  for (uint8_t i = 0; i < 3; i++) if (magAutoRange[i] > mxr) mxr = magAutoRange[i];
+  if (mxr < 100) { magAutoVert = -1; return; } // not enough rotation data
+  magAutoVert = vert;
   int a1 = -1, a2 = -1;
   for (uint8_t i = 0; i < 3; i++) if ((int)i != vert) { if (a1 < 0) a1 = i; else a2 = i; }
   // map (A, B) -> magMap, heading = atan2(B, A)

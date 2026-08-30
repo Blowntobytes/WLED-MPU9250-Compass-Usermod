@@ -64,10 +64,10 @@ index 0000000..2bafdd5
 \ No newline at end of file
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
 new file mode 100644
-index 0000000..1065c62
+index 0000000..74cd79a
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
-@@ -0,0 +1,1208 @@
+@@ -0,0 +1,1216 @@
 +/*
 + * WLED usermod: MPU-9250 compass LED display (implementation)
 + * See usermod_mpu9250_compass.h for details.
@@ -1142,6 +1142,9 @@ index 0000000..1065c62
 +  top["tiltAxis"]   = tiltAxis;    // Falling Sand tilt axis: 0=both, 1=left/right, 2=forward/back
 +  top["magMap"]     = magMap;      // GY-271 heading axis pair
 +  top["magAuto"]    = magAuto;     // true while auto-detect is collecting rotation data
++  top["magAutoVert"] = magAutoVert; // axis with the least swing (0=X,1=Y,2=Z, -1 = no rotation captured)
++  JsonArray mar = top.createNestedArray("magAutoRange");
++  mar.add(magAutoRange[0]); mar.add(magAutoRange[1]); mar.add(magAutoRange[2]);
 +  top["tiltX"]      = _gx;         // gravity on display X (-1..1)
 +  top["tiltY"]      = _gy;         // gravity on display Y (-1..1)
 +  JsonArray scan = top.createNestedArray("i2cScan");
@@ -1200,14 +1203,19 @@ index 0000000..1065c62
 +void Mpu9250Compass::finishMagAuto() {
 +  if (!magAuto) return;
 +  magAuto = false;
++  magAutoVert = -1;
 +  if (!_magOK) return;
-+  // the axis with the smallest range is the one aligned with the rotation axis
++  for (uint8_t i = 0; i < 3; i++) magAutoRange[i] = magMax[i] - magMin[i];
++  // the axis with the smallest swing is aligned with the rotation axis
 +  // (vertical when held level); the other two are the horizontal heading plane
-+  int32_t range[3];
-+  for (uint8_t i = 0; i < 3; i++) range[i] = magMax[i] - magMin[i];
 +  int vert = 0;
-+  if (range[1] < range[vert]) vert = 1;
-+  if (range[2] < range[vert]) vert = 2;
++  if (magAutoRange[1] < magAutoRange[vert]) vert = 1;
++  if (magAutoRange[2] < magAutoRange[vert]) vert = 2;
++  // sanity check: if no axis swung much, no real rotation was captured
++  int32_t mxr = 0;
++  for (uint8_t i = 0; i < 3; i++) if (magAutoRange[i] > mxr) mxr = magAutoRange[i];
++  if (mxr < 100) { magAutoVert = -1; return; } // not enough rotation data
++  magAutoVert = vert;
 +  int a1 = -1, a2 = -1;
 +  for (uint8_t i = 0; i < 3; i++) if ((int)i != vert) { if (a1 < 0) a1 = i; else a2 = i; }
 +  // map (A, B) -> magMap, heading = atan2(B, A)
@@ -1278,10 +1286,10 @@ index 0000000..1065c62
 +REGISTER_USERMOD(mpu9250_compass);
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.h b/usermods/mpu9250_compass/usermod_mpu9250_compass.h
 new file mode 100644
-index 0000000..bc9b3db
+index 0000000..6a84a87
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.h
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,143 @@
 +#pragma once
 +
 +/*
@@ -1377,6 +1385,8 @@ index 0000000..bc9b3db
 +    uint32_t magAutoStart = 0;
 +    int16_t  magMin[3] = {32767, 32767, 32767};
 +    int16_t  magMax[3] = {-32768, -32768, -32768};
++    int32_t  magAutoRange[3] = {0, 0, 0}; // measured per-axis swing during auto-detect
++    int8_t   magAutoVert = -1;             // axis with the least swing (-1 = not run / no rotation)
 +
 +    // ---- diagnostics ----
 +    uint8_t  whoAmI    = 0;      // MPU-6500 WHO_AM_I value (0x71 genuine MPU-9250, 0x70/0x68 clones, 0 = no reply)
