@@ -64,10 +64,10 @@ index 0000000..2bafdd5
 \ No newline at end of file
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
 new file mode 100644
-index 0000000..4c75d28
+index 0000000..07314f4
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.cpp
-@@ -0,0 +1,1135 @@
+@@ -0,0 +1,1141 @@
 +/*
 + * WLED usermod: MPU-9250 compass LED display (implementation)
 + * See usermod_mpu9250_compass.h for details.
@@ -778,8 +778,9 @@ index 0000000..4c75d28
 +  uint16_t northSize = 1 + (SEGMENT.intensity * (W - 1)) / 255;
 +  if (northSize > W) northSize = W;
 +
-+  // heading (degrees 0..360) mapped to LED space (0..W)
-+  float target = mpu9250_compass.compassHeading() / 360.0f * (float)W;
++  // heading (degrees 0..360) mapped to LED space (0..W); uses the raw heading
++  // so the smoothness slider below is the only smoothing applied
++  float target = mpu9250_compass.compassHeadingRaw() / 360.0f * (float)W;
 +
 +  // smooth tracking around the ring (shortest path); speed sets the response
 +  if (SEGENV.call == 0) *pos = target;
@@ -997,10 +998,10 @@ index 0000000..4c75d28
 +  h += headingOffset;
 +  h = fmodf(h, 360.0f);
 +  if (h < 0.0f) h += 360.0f;
++  headingRaw = h; // raw heading (Compass effect uses this)
 +
-+  // exponential moving average in sine/cosine space (handles 360 wraparound)
-+  // the per-effect "Compass" smoothness slider provides the user control
-+  float alpha = 0.35f;
++  // light smoothing in sine/cosine space (handles 360 wraparound)
++  float alpha = 0.6f;
 +  float hr = h * PI_F / 180.0f;
 +  _smoothCos = _smoothCos * (1.0f - alpha) + cosf(hr) * alpha;
 +  _smoothSin = _smoothSin * (1.0f - alpha) + sinf(hr) * alpha;
@@ -1123,6 +1124,7 @@ index 0000000..4c75d28
 +  for (uint8_t i = 0; i < scanCount; i++) scan.add(scanResults[i]);
 +  if (sensorAvailable) {
 +    top["heading"] = heading;
++    top["headingRaw"] = headingRaw;
 +    if (_sensorKind == 1) {
 +      top["pitch"] = pitch;
 +      top["roll"]  = roll;
@@ -1189,6 +1191,10 @@ index 0000000..4c75d28
 +    mInfo.add(F("not detected - compass unavailable"));
 +    mInfo.add(F(""));
 +  }
++  // raw magnetometer readout (useful when checking that the sensor rotates 0-360)
++  JsonArray mraw = user.createNestedArray("Mag raw");
++  mraw.add(String(mag[0]) + ", " + String(mag[1]) + ", " + String(mag[2]));
++  mraw.add(F(""));
 +  if (_sensorKind == 1) {
 +    pInfo.add(pitch);
 +    pInfo.add(" deg");
@@ -1205,10 +1211,10 @@ index 0000000..4c75d28
 +REGISTER_USERMOD(mpu9250_compass);
 diff --git a/usermods/mpu9250_compass/usermod_mpu9250_compass.h b/usermods/mpu9250_compass/usermod_mpu9250_compass.h
 new file mode 100644
-index 0000000..28d72b4
+index 0000000..10c00c9
 --- /dev/null
 +++ b/usermods/mpu9250_compass/usermod_mpu9250_compass.h
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,132 @@
 +#pragma once
 +
 +/*
@@ -1285,7 +1291,8 @@ index 0000000..28d72b4
 +    uint32_t lastSample      = 0;
 +    uint8_t  readErrors      = 0;
 +    int16_t  acc[3], gyr[3], mag[3];
-+    float    heading = 0.0f;   // tilt compensated, degrees 0..360
++    float    heading = 0.0f;   // tilt compensated, degrees 0..360 (smoothed)
++    float    headingRaw = 0.0f; // heading before the internal smoothing (for the effect / diagnostics)
 +    float    pitch   = 0.0f;   // degrees
 +    float    roll    = 0.0f;   // degrees
 +    float    _smoothCos = 1.0f;
@@ -1336,6 +1343,9 @@ index 0000000..28d72b4
 +    inline float tiltRawY() const { return _rawGY; }
 +    // smoothed magnetometer heading (degrees 0..360) for the compass effect
 +    inline float compassHeading() const { return heading; }
++    // raw (unsmoothed) heading - the Compass effect uses this so its own
++    // smoothness slider is the only smoothing
++    inline float compassHeadingRaw() const { return headingRaw; }
 +};
 diff --git a/wled00/FX.cpp b/wled00/FX.cpp
 index bd42d1a..a303afb 100644

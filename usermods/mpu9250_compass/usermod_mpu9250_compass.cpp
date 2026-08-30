@@ -708,8 +708,9 @@ static void mode_compass() {
   uint16_t northSize = 1 + (SEGMENT.intensity * (W - 1)) / 255;
   if (northSize > W) northSize = W;
 
-  // heading (degrees 0..360) mapped to LED space (0..W)
-  float target = mpu9250_compass.compassHeading() / 360.0f * (float)W;
+  // heading (degrees 0..360) mapped to LED space (0..W); uses the raw heading
+  // so the smoothness slider below is the only smoothing applied
+  float target = mpu9250_compass.compassHeadingRaw() / 360.0f * (float)W;
 
   // smooth tracking around the ring (shortest path); speed sets the response
   if (SEGENV.call == 0) *pos = target;
@@ -927,10 +928,10 @@ void Mpu9250Compass::updateHeading() {
   h += headingOffset;
   h = fmodf(h, 360.0f);
   if (h < 0.0f) h += 360.0f;
+  headingRaw = h; // raw heading (Compass effect uses this)
 
-  // exponential moving average in sine/cosine space (handles 360 wraparound)
-  // the per-effect "Compass" smoothness slider provides the user control
-  float alpha = 0.35f;
+  // light smoothing in sine/cosine space (handles 360 wraparound)
+  float alpha = 0.6f;
   float hr = h * PI_F / 180.0f;
   _smoothCos = _smoothCos * (1.0f - alpha) + cosf(hr) * alpha;
   _smoothSin = _smoothSin * (1.0f - alpha) + sinf(hr) * alpha;
@@ -1053,6 +1054,7 @@ void Mpu9250Compass::addToJsonState(JsonObject& obj) {
   for (uint8_t i = 0; i < scanCount; i++) scan.add(scanResults[i]);
   if (sensorAvailable) {
     top["heading"] = heading;
+    top["headingRaw"] = headingRaw;
     if (_sensorKind == 1) {
       top["pitch"] = pitch;
       top["roll"]  = roll;
@@ -1119,6 +1121,10 @@ void Mpu9250Compass::addToJsonInfo(JsonObject& root) {
     mInfo.add(F("not detected - compass unavailable"));
     mInfo.add(F(""));
   }
+  // raw magnetometer readout (useful when checking that the sensor rotates 0-360)
+  JsonArray mraw = user.createNestedArray("Mag raw");
+  mraw.add(String(mag[0]) + ", " + String(mag[1]) + ", " + String(mag[2]));
+  mraw.add(F(""));
   if (_sensorKind == 1) {
     pInfo.add(pitch);
     pInfo.add(" deg");

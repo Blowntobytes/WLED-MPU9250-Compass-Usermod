@@ -74,7 +74,8 @@ class Mpu9250Compass : public Usermod {
     uint32_t lastSample      = 0;
     uint8_t  readErrors      = 0;
     int16_t  acc[3], gyr[3], mag[3];
-    float    heading = 0.0f;   // tilt compensated, degrees 0..360
+    float    heading = 0.0f;   // tilt compensated, degrees 0..360 (smoothed)
+    float    headingRaw = 0.0f; // heading before the internal smoothing (for the effect / diagnostics)
     float    pitch   = 0.0f;   // degrees
     float    roll    = 0.0f;   // degrees
     float    _smoothCos = 1.0f;
@@ -125,4 +126,7 @@ class Mpu9250Compass : public Usermod {
     inline float tiltRawY() const { return _rawGY; }
     // smoothed magnetometer heading (degrees 0..360) for the compass effect
     inline float compassHeading() const { return heading; }
+    // raw (unsmoothed) heading - the Compass effect uses this so its own
+    // smoothness slider is the only smoothing
+    inline float compassHeadingRaw() const { return headingRaw; }
 };
