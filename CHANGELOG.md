@@ -10,6 +10,21 @@ Versioning scheme:
 * **MINOR** (v1.1.0, v1.2.0, ...) — new features, backwards compatible.
 * **PATCH** (v1.1.1, v1.1.2, ...) — bug fixes.
 
+## [1.6.0] - 2026-08-30
+
+### Added
+- **ICM-20948 support**: the ICM-20948 (a register-compatible successor to the
+  MPU-9250 with an embedded AK09916 magnetometer) is now auto-detected by its
+  WHO_AM_I (0xEA) and driven with its banked register map. Compass and all tilt
+  effects work out of the box.
+- **Calibration buttons in the usermod settings page**: no more JSON commands.
+  Three one-shot checkboxes (`Calibrate`, `Save calibration`, `Reset
+  calibration`) start, apply and clear calibration from Config > Usermod.
+- **GY-271 axis auto-detect diagnostics**: `magAutoVert` (the axis with the
+  least swing while rotating flat) and `magAutoRange` (per-axis swing) are
+  reported in `/json/state`, so a rotated chip's horizontal axis pair can be
+  confirmed at a glance.
+
 ## [1.5.0] - 2026-08-28
 
 ### Added
