@@ -683,6 +683,60 @@ static void mode_bubble_level() {
   }
 }
 
+/*
+ * Custom WLED effect: "Compass".
+ * Shows magnetic north on the strip using the magnetometer heading. The
+ * north sector (configurable size) uses the segment's Fx colour slot and the
+ * rest of the strip uses the Bg colour slot. The smoothness slider sets how
+ * steadily the north sector tracks the heading (it moves the shortest way
+ * around the ring).
+ * Parameters (segment sliders):
+ *   speed     = smoothness (how steadily the north sector tracks)
+ *   intensity = north sector size (number of LEDs)
+ *   Fx colour = north sector, Bg colour = background
+ */
+static const char _data_FX_MODE_COMPASS[] PROGMEM =
+  "Compass@Smoothness,North size;!,!;!;12;sx=128,ix=24";
+
+static void mode_compass() {
+  const uint16_t W = SEGMENT.virtualWidth();
+  const uint16_t H = SEGMENT.virtualHeight();
+  if (W == 0) return;
+  if (!SEGENV.allocateData(sizeof(float))) return; // smoothed north position
+  float *pos = reinterpret_cast<float*>(SEGENV.data);
+
+  uint16_t northSize = 1 + (SEGMENT.intensity * (W - 1)) / 255;
+  if (northSize > W) northSize = W;
+
+  // heading (degrees 0..360) mapped to LED space (0..W)
+  float target = mpu9250_compass.compassHeading() / 360.0f * (float)W;
+
+  // smooth tracking around the ring (shortest path); speed sets the response
+  if (SEGENV.call == 0) *pos = target;
+  float W2 = (float)W * 0.5f;
+  float diff = target - *pos;
+  while (diff >  W2) diff -= (float)W;
+  while (diff < -W2) diff += (float)W;
+  float a = 0.05f + (float)SEGMENT.speed / 255.0f * 0.9f;
+  *pos += diff * a;
+  if (*pos < 0.0f) *pos += (float)W;
+  if (*pos >= (float)W) *pos -= (float)W;
+
+  // north sector = northSize LEDs centred on the north position
+  int16_t start = (int16_t)(*pos - (northSize - 1) / 2.0f + 0.5f);
+  uint32_t northCol = SEGCOLOR(0); // Fx
+  uint32_t bgCol    = SEGCOLOR(1); // Bg
+
+  SEGMENT.fill(bgCol);
+  for (uint16_t k = 0; k < northSize; k++) {
+    int16_t i = start + (int16_t)k;
+    while (i < 0) i += (int16_t)W;
+    while (i >= (int16_t)W) i -= (int16_t)W;
+    if (H == 1) SEGMENT.setPixelColor((uint16_t)i, northCol);
+    else for (uint16_t y = 0; y < H; y++) SEGMENT.setPixelColorXY((uint16_t)i, y, northCol);
+  }
+}
+
 const char Mpu9250Compass::_name[] PROGMEM = "MPU9250Compass";
 
 /* ---------------------------------------------------------------- setup */
@@ -752,6 +806,7 @@ void Mpu9250Compass::setup() {
   um_data->u_data[0] = &_effTilt;
   strip.addEffect(255, &mode_falling_sand, _data_FX_MODE_FALLING_SAND);
   strip.addEffect(255, &mode_bubble_level, _data_FX_MODE_BUBBLE_LEVEL);
+  strip.addEffect(255, &mode_compass, _data_FX_MODE_COMPASS);
   initSensor();
 }
 

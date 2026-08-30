@@ -125,6 +125,28 @@ steady (no flicker) while the device is level.
 > (`overlayEnabled`), the compass will paint over the sand — set
 > `overlayEnabled = false` to show only the Falling Sand effect.
 
+### Compass effect
+
+The usermod registers a **"Compass"** effect that shows **magnetic north** on
+the strip using the magnetometer heading. A sector of LEDs (configurable
+**North size**) centred on the heading lights up in the **Fx** colour; the rest
+of the strip uses the **Bg** colour.
+
+Select it as the effect for your segment and use its sliders:
+
+| Slider | Effect |
+|--------|--------|
+| Effect speed   | Smoothness — how steadily the north sector tracks the heading (it always takes the shortest way around the ring) |
+| Effect intensity | North size (number of LEDs in the north sector) |
+
+Colours come from the colour picker screen: the **Fx** slot colours the north
+sector and the **Bg** slot colours the background. Use `headingOffset` in the
+usermod settings to align the ring/sensor (and magnetic declination).
+
+> If you have a magnetometer and the compass overlay is also enabled
+> (`overlayEnabled`), the overlay will paint over this effect — set
+> `overlayEnabled = false` to use the Compass effect on its own.
+
 ### Bubble Level effect
 
 The usermod also registers a **"Bubble Level"** effect — a spirit level on the

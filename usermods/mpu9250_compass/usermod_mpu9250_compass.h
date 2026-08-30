@@ -138,4 +138,6 @@ class Mpu9250Compass : public Usermod {
     // continuous raw gravity (in g, no dead zone) for the bubble level
     inline float tiltRawX() const { return _rawGX; }
     inline float tiltRawY() const { return _rawGY; }
+    // smoothed magnetometer heading (degrees 0..360) for the compass effect
+    inline float compassHeading() const { return heading; }
 };
