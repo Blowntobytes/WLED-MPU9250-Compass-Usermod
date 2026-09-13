@@ -1,4 +1,4 @@
-# WLED MPU-9250 Compass Usermod
+# WLED Compass Usermod
 
 Adds a magnetic compass plus tilt-driven lighting effects to WLED using an
 **MPU-9250** 9-axis IMU or a **GY-271** magnetometer on the I2C bus. Designed
